@@ -469,13 +469,33 @@ pub fn sim_v3(
 }
 
 pub fn commit_v3(s: &mut V3State, r: &V3Sim) {
+    if commit_v3_deferred(s, r) {
+        resolve_tick(s);
+    }
+}
+
+/// `commit_v3` without computing a tick the swap left between boundaries:
+/// returns whether `s.tick` is stale. The caller must [`resolve_tick`] before
+/// `s` is walked again. A replay commits every pool it trades and walks few
+/// of them twice, so most of its states are dropped with the tick unpaid.
+pub fn commit_v3_deferred(s: &mut V3State, r: &V3Sim) -> bool {
     s.sqrt_price = r.sqrt_price;
-    s.tick = r
-        .tick
-        .resolve(r.sqrt_price)
-        .expect("sim_v3 checked the sqrt price range");
     s.liquidity = r.liquidity;
     s.pos = r.pos;
+    match r.tick {
+        SimTick::Known(tick) => {
+            s.tick = tick;
+            false
+        }
+        SimTick::AtSqrtPrice => true,
+    }
+}
+
+/// The tick a deferred commit left stale, as `commit_v3` stores it.
+pub fn resolve_tick(s: &mut V3State) {
+    s.tick = SimTick::AtSqrtPrice
+        .resolve(s.sqrt_price)
+        .expect("sim_v3 checked the sqrt price range");
 }
 
 // ---- V2 constant product ----

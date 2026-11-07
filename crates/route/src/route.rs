@@ -12,7 +12,8 @@ use crate::chain::{ChainProfile, MAX_ROUTE_HOPS};
 use crate::chain::{ROBINHOOD_PROFILE, route_token_paths};
 use crate::ekubo::{EkuboSim, EkuboState, commit_ekubo, sim_ekubo};
 use crate::pools::{
-    V2Sim, V2State, V3Protocol, V3Sim, V3State, commit_v2, commit_v3, sim_v2, sim_v3,
+    V2Sim, V2State, V3Protocol, V3Sim, V3State, commit_v2, commit_v3, commit_v3_deferred,
+    resolve_tick, sim_v2, sim_v3,
 };
 use crate::snapshot::Snapshot;
 use crate::universe::RouteUniverse;
@@ -1683,6 +1684,10 @@ fn greedy_alloc_full_scan_with_budget(
 struct ReplayState<'a> {
     snap: &'a Snapshot,
     v3s: Vec<(usize, V3State)>,
+    /// Pools in `v3s` whose last swap ended between ticks, committed with
+    /// the tick unpaid (`commit_v3_deferred`). A leg resolves the pools it is
+    /// about to walk, so a stale tick is never read.
+    stale_ticks: Vec<usize>,
     v2s: Vec<(usize, V2State)>,
     ekubos: Vec<(usize, EkuboState)>,
     used_sheriff: std::collections::HashSet<Address>,
@@ -1734,6 +1739,7 @@ impl<'a> ReplayState<'a> {
         Self {
             snap,
             v3s: Vec::new(),
+            stale_ticks: Vec::new(),
             v2s: Vec::new(),
             ekubos: Vec::new(),
             used_sheriff: std::collections::HashSet::new(),
@@ -1742,14 +1748,38 @@ impl<'a> ReplayState<'a> {
         }
     }
 
+    /// The pools and the output so far, without the legs: what a polish
+    /// candidate replays its suffix from. Copying the prefix legs for every
+    /// candidate cost more than most candidates' own replays.
+    fn fork(&self, capacity: usize) -> Self {
+        Self {
+            snap: self.snap,
+            v3s: self.v3s.clone(),
+            stale_ticks: self.stale_ticks.clone(),
+            v2s: self.v2s.clone(),
+            ekubos: self.ekubos.clone(),
+            used_sheriff: self.used_sheriff.clone(),
+            legs: Vec::with_capacity(capacity),
+            total: self.total,
+        }
+    }
+
     fn commit(&mut self, updates: &[Update]) {
         let snap = self.snap;
         for (hop, r) in updates {
             match r {
-                SimResult::V3(r) => commit_v3(
-                    overlay(&mut self.v3s, hop.index, || snap.v3[hop.index].1.clone()),
-                    r,
-                ),
+                SimResult::V3(r) => {
+                    let state = overlay(&mut self.v3s, hop.index, || snap.v3[hop.index].1.clone());
+                    let stale = commit_v3_deferred(state, r);
+                    let listed = self.stale_ticks.iter().position(|&at| at == hop.index);
+                    match (stale, listed) {
+                        (true, None) => self.stale_ticks.push(hop.index),
+                        (false, Some(at)) => {
+                            self.stale_ticks.swap_remove(at);
+                        }
+                        _ => {}
+                    }
+                }
                 SimResult::V2(r) => commit_v2(
                     overlay(&mut self.v2s, hop.index, || snap.v2[hop.index].1.clone()),
                     r,
@@ -1773,6 +1803,19 @@ impl<'a> ReplayState<'a> {
                 let pool = &snap.v3[hop.index].0;
                 if pool.protocol == V3Protocol::SHERIFF && !self.used_sheriff.insert(pool.address) {
                     return Ok(false);
+                }
+            }
+        }
+        if !self.stale_ticks.is_empty() {
+            for hop in path.iter().filter(|hop| hop.kind == HopKind::V3) {
+                if let Some(at) = self.stale_ticks.iter().position(|&at| at == hop.index) {
+                    self.stale_ticks.swap_remove(at);
+                    let (_, state) = self
+                        .v3s
+                        .iter_mut()
+                        .find(|(at, _)| *at == hop.index)
+                        .expect("a stale tick belongs to an overlaid pool");
+                    resolve_tick(state);
                 }
             }
         }
@@ -1862,29 +1905,52 @@ fn eval_bps_from_checkpoint(
     start: usize,
     checkpoint: &ReplayState<'_>,
 ) -> anyhow::Result<Option<Plan>> {
+    Ok(eval_suffix(snap, paths, bps, amount_in, start, checkpoint)?
+        .map(|(amount_out, suffix)| assemble(checkpoint, suffix, bps, amount_out)))
+}
+
+/// Replays `paths[start..]` at `bps` from `checkpoint`, which holds legs
+/// `..start`: the plan's output and the suffix legs, or None when a leg goes
+/// dry or drops (such a vector must not be chosen).
+fn eval_suffix(
+    snap: &Snapshot,
+    paths: &[Vec<Hop>],
+    bps: &[u32],
+    amount_in: U256,
+    start: usize,
+    checkpoint: &ReplayState<'_>,
+) -> anyhow::Result<Option<(U256, Vec<Leg>)>> {
     let amounts = amounts_of_bps(bps, amount_in)?;
-    let mut replay = checkpoint.clone();
+    let mut replay = checkpoint.fork(paths.len() - start);
     for (path, &amount) in paths[start..].iter().zip(&amounts[start..]) {
         if !replay.push(snap, path, amount)? {
             return Ok(None);
         }
     }
-    if replay.legs.len() != paths.len() {
+    if checkpoint.legs.len() + replay.legs.len() != paths.len() {
         return Ok(None);
     }
-    let q = replay.into_plan();
-    Ok(Some(Plan {
-        legs: q
-            .legs
-            .into_iter()
-            .zip(bps)
-            .map(|(l, &b)| Leg { slice_bps: b, ..l })
-            .collect(),
-        amount_out: q.amount_out,
-        universe_id: None,
-    }))
+    Ok(Some((replay.total, replay.legs)))
 }
 
+/// The plan of a replayed suffix: the checkpoint's legs, then the suffix's,
+/// each carrying its `slice_bps`.
+fn assemble(checkpoint: &ReplayState<'_>, suffix: Vec<Leg>, bps: &[u32], amount_out: U256) -> Plan {
+    Plan {
+        legs: checkpoint
+            .legs
+            .iter()
+            .cloned()
+            .chain(suffix)
+            .zip(bps)
+            .map(|(leg, &slice_bps)| Leg { slice_bps, ..leg })
+            .collect(),
+        amount_out,
+        universe_id: None,
+    }
+}
+
+#[cfg(test)]
 fn replay_prefix<'a>(
     snap: &'a Snapshot,
     paths: &[Vec<Hop>],
@@ -1980,9 +2046,13 @@ fn polish_plan(
     loop {
         budget.checkpoint("route polish")?;
         let mut improved = false;
+        // Legs before coordinate i do not move with bps[i]: each takes its bps
+        // of the balance the earlier ones left. So the replay of legs ..i is
+        // built once per round, one leg after each coordinate is settled,
+        // rather than replayed from the first leg for every coordinate.
+        let mut checkpoint = ReplayState::new(snap, n);
         // the last leg always takes the remainder — only n-1 free dimensions
         for i in 0..n - 1 {
-            let checkpoint = replay_prefix(snap, paths, &bps, amount_in, i)?;
             for step in [256i64, 64, 16, 4, 1] {
                 for dir in [1i64, -1] {
                     budget.checkpoint("route polish")?;
@@ -1993,14 +2063,20 @@ fn polish_plan(
                     let mut nb = bps.clone();
                     nb[i] = u32::try_from(cand).expect("bps in range");
                     evals += 1;
-                    if let Some(p) =
-                        eval_bps_from_checkpoint(snap, paths, &nb, amount_in, i, &checkpoint)?
-                        && p.amount_out > best.amount_out
+                    if let Some((amount_out, suffix)) =
+                        eval_suffix(snap, paths, &nb, amount_in, i, &checkpoint)?
+                        && amount_out > best.amount_out
                     {
+                        best = assemble(&checkpoint, suffix, &nb, amount_out);
                         bps = nb;
-                        best = p;
                         improved = true;
                     }
+                }
+            }
+            if i + 2 < n {
+                let amount = amounts_of_bps(&bps, amount_in)?[i];
+                if !checkpoint.push(snap, &paths[i], amount)? {
+                    bail!("executable polish prefix became invalid");
                 }
             }
         }
@@ -2990,6 +3066,87 @@ mod tests {
         assert_eq!(selected.amount_out, U256::from(137_728));
         assert_eq!(selected.legs.len(), 1);
         assert_eq!(selected.legs[0].path[0].index, 2);
+    }
+
+    /// A swap that ends between ticks is committed with its tick unpaid; the
+    /// next leg through that pool must walk it from the tick `commit_v3`
+    /// would have stored, so the replay's output is the eager replay's.
+    #[test]
+    fn a_replay_resolves_a_deferred_tick_before_walking_the_pool_again() {
+        use crate::pools::{TickInfo, V3ExecutionMeta, V3Pool};
+        let (a, b) = (Address::repeat_byte(0x0a), Address::repeat_byte(0x0b));
+        let liquidity = U256::from(10).pow(U256::from(22));
+        let net = alloy_primitives::I256::try_from(liquidity).unwrap();
+        let pool = V3Pool {
+            protocol: V3Protocol::UNIV3,
+            address: Address::repeat_byte(0x33),
+            token0: a,
+            token1: b,
+            fee_ppm: 3_000,
+            tick_spacing: 60,
+            verify_pool_spacing: false,
+            execution: Some(V3ExecutionMeta {
+                fork_id: 0,
+                pool_id: 3_000,
+            }),
+            v4: None,
+            algebra: None,
+        };
+        let ticks = vec![
+            TickInfo {
+                tick: -60_000,
+                liquidity_net: net,
+            },
+            TickInfo {
+                tick: 60_000,
+                liquidity_net: -net,
+            },
+        ];
+        let state = V3State {
+            sqrt_price: U256::ONE << 96usize,
+            tick: 0,
+            liquidity,
+            ticks: ticks.into(),
+            pos: 1,
+            lo_cover: -61_440,
+            hi_cover: 61_440,
+        };
+        let snap = Snapshot {
+            block: 1,
+            settler: None,
+            v3: vec![(pool.clone(), state.clone())],
+            v2: vec![],
+            ekubo: vec![],
+        };
+        let path = vec![Hop {
+            kind: HopKind::V3,
+            index: 0,
+            zero_for_one: true,
+            token_in: a,
+            token_out: b,
+        }];
+        let first = U256::from(10).pow(U256::from(20));
+        let second = first * U256::from(3);
+
+        let mut replay = ReplayState::new(&snap, 2);
+        assert!(replay.push(&snap, &path, first).unwrap());
+        assert_eq!(replay.stale_ticks, vec![0], "the swap ended between ticks");
+        assert!(replay.push(&snap, &path, second).unwrap());
+
+        let mut eager = state;
+        let one = sim_v3(&pool, &eager, true, first).unwrap();
+        commit_v3(&mut eager, &one);
+        let two = sim_v3(&pool, &eager, true, second).unwrap();
+        assert_eq!(replay.legs[1].amount_out, two.amount_out);
+        commit_v3(&mut eager, &two);
+        let (_, mut replayed) = replay.v3s[0].clone();
+        if replay.stale_ticks.contains(&0) {
+            resolve_tick(&mut replayed);
+        }
+        assert_eq!(
+            (replayed.tick, replayed.sqrt_price, replayed.liquidity),
+            (eager.tick, eager.sqrt_price, eager.liquidity)
+        );
     }
 
     #[test]
