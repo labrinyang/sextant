@@ -117,6 +117,9 @@ credential scope. Requests carry a scope digest, not the API key or firm payload
 
 The authority exposes authenticated `POST /internal/native-quota/acquire`,
 `POST /internal/native-quota/release` and `GET /internal/native-quota/health`.
+It is compiled with this crate's `authority` feature, which the `sextant`
+binary enables; a crate that needs only the client (Settler encoding does)
+builds without it, and without an HTTP server.
 Client requests cannot raise its ceilings. Orderbook and firm HTTP dispatches
 share pacing; book discovery does not consume firm capacity. Firm capacity stays
 leased through validation, and physical Native calls are bounded by the remaining

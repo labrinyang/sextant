@@ -91,11 +91,12 @@ A Cargo workspace. Each crate depends only on those above it:
 | `sextant-chain` | manifests, chain and Settler profiles, venue catalogs |
 | `sextant-route` | route universes, split routing, the duality-gap certificate, counterfactual coverage |
 | `sextant-io` | the JSON-RPC client, its dispatch admission, work budgets, ABI |
-| `sextant-discovery` | the indexer client, the QuoteLens encoder, Ekubo pool reads |
-| `sextant-rfq` | Native RFQ: firm quotes, validation, beneficiary authorization, the quota coordinator |
+| `sextant-discovery` | the indexer client, the QuoteLens encoder, Ekubo pool reads, and the state read: one pair's pools proved and read at one block |
+| `sextant-market` | the engine, which keeps recently quoted pairs' snapshots hot and shares each pair's pull among its waiters, and the resident pool state |
+| `sextant-rfq` | Native RFQ: firm quotes, validation, beneficiary authorization, the quota coordinator (its authority behind the `authority` feature) |
 | `sextant-exec` | plans into Settler transactions, and their simulation |
 | `sextant-observe` | the panic hook and the log subscriber |
-| `sextant` (root) | state reads, the resident state, the engine, quotes, the server |
+| `sextant` (root) | the configuration, quotes, the server and its metrics |
 
 The root crate re-exports every module at its old path (`sextant::route`,
 `sextant::settler`, …). `sextant::chain` is the chain crate's own `chain`
@@ -157,7 +158,7 @@ reach the best so far. `examples/route_profile.rs` prints warm and cold timings.
 
 Off unless `SOLVER_RESIDENT=on`, and only on a chain with a venue table (`bsc`,
 `ethereum`). The solver keeps every listed pool's state in memory and brings it
-to each new block (`src/resident.rs`).
+to each new block (`crates/market/src/resident.rs`).
 
 - **The list.** `SOLVER_RESIDENT_POOL_LIST_URL` serves a JSON array of pools,
   each `{"protocol", "address", "token0", "token1", "feePpm"}` with `protocol`
@@ -182,7 +183,7 @@ to each new block (`src/resident.rs`).
   every pool is read, as it is after a gap of more than 32 blocks, a failed log
   read, and at least every `SOLVER_RESIDENT_FULL_READ_MS` (60,000). `0` reads
   every block whole and asks for no logs. A venue not known to run that code is
-  read at every block (`src/resident/carry.rs`).
+  read at every block (`crates/market/src/resident/carry.rs`).
 - **The carry is audited.** A whole read that follows linked blocks checks
   every pool that emitted nothing against the state it would have carried.
   `/health` (`resident.carry`) and `/metrics` count the reads of each kind, the
