@@ -295,11 +295,6 @@ pub struct PreparedRoutes<'a> {
     three_hop_edges: Vec<[usize; MAX_ROUTE_HOPS]>,
 }
 
-struct CandidatePathSets {
-    combined: Vec<Vec<Hop>>,
-    three_hop: Vec<Vec<Hop>>,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SeedDemand {
     Overall,
@@ -620,23 +615,27 @@ impl<'a> PreparedRoutes<'a> {
         })
     }
 
-    fn candidate_path_sets(
-        &self,
-        amount_in: U256,
-        chunks: u32,
-    ) -> anyhow::Result<CandidatePathSets> {
+    /// This solve's three-hop candidates. A solve routes over the route set's
+    /// baseline paths followed by these, viewed in place by [`Self::combined`]
+    /// rather than copied: a dense pair has tens of thousands of baseline
+    /// paths, and each copy was an allocation per path per solve.
+    fn candidate_path_sets(&self, amount_in: U256, chunks: u32) -> anyhow::Result<Vec<Vec<Hop>>> {
         #[cfg(test)]
         record_route_work(|counts| counts.path_generations += 1);
         self.budget.checkpoint("route candidate generation")?;
         ensure!(amount_in > U256::ZERO, "amount must be positive");
         ensure!(chunks > 0, "allocation chunks must be positive");
-        let three_hop = three_hop_candidates(self, amount_in, chunks)?;
-        let mut combined = self.baseline_paths.clone();
-        combined.extend(three_hop.iter().cloned());
-        Ok(CandidatePathSets {
-            combined,
-            three_hop,
-        })
+        three_hop_candidates(self, amount_in, chunks)
+    }
+
+    /// The baseline paths, then `three_hop`: the order every solve
+    /// enumerates, which the greedy's tie-breaks depend on.
+    fn combined<'p>(&'p self, three_hop: &'p [Vec<Hop>]) -> Vec<&'p [Hop]> {
+        self.baseline_paths
+            .iter()
+            .chain(three_hop)
+            .map(Vec::as_slice)
+            .collect()
     }
 
     fn candidate_plans(
@@ -660,7 +659,8 @@ impl<'a> PreparedRoutes<'a> {
         if demand == SeedDemand::Single {
             // Single-only callers must not pay for split allocation or its
             // unrelated min-share validation and checkpoint.
-            let paths = self.candidate_path_sets(amount_in, chunks)?.combined;
+            let three_hop = self.candidate_path_sets(amount_in, chunks)?;
+            let paths = self.combined(&three_hop);
             let mut plans = Vec::with_capacity(1);
             if let Some(mut plan) =
                 best_single_plan_with_budget(self.snap, &paths, amount_in, &self.budget)?
@@ -676,10 +676,8 @@ impl<'a> PreparedRoutes<'a> {
         }
         self.budget.checkpoint("route allocation")?;
         ensure!(min_share_bps <= BPS_BASE, "minimum share exceeds 10000 bps");
-        let CandidatePathSets {
-            combined,
-            three_hop,
-        } = self.candidate_path_sets(amount_in, chunks)?;
+        let three_hop = self.candidate_path_sets(amount_in, chunks)?;
+        let combined = self.combined(&three_hop);
         if combined.is_empty() {
             return Ok(SeedCandidates {
                 plans: Vec::new(),
@@ -1477,44 +1475,52 @@ fn balanced_chunk_amounts(amount_in: U256, chunks: u32) -> anyhow::Result<Vec<U2
     Ok(amounts)
 }
 
-fn has_bidirectional_pool_use(paths: &[Vec<Hop>]) -> bool {
-    let mut directions = std::collections::HashMap::new();
-    for hop in paths.iter().flatten() {
-        let key = (hop.kind, hop.index);
-        match directions.entry(key) {
-            std::collections::hash_map::Entry::Occupied(entry)
-                if *entry.get() != hop.zero_for_one =>
-            {
-                return true;
-            }
-            std::collections::hash_map::Entry::Occupied(_) => {}
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(hop.zero_for_one);
-            }
+/// Whether some pool is traded in both directions across `paths`. One
+/// direction byte per pool, indexed like the snapshot (0 unseen, 1
+/// zero-for-one, 2 one-for-zero): a dense pair's paths hold tens of
+/// thousands of hops, and a hash map paid for every one of them.
+fn has_bidirectional_pool_use<P: AsRef<[Hop]>>(snap: &Snapshot, paths: &[P]) -> bool {
+    let mut seen = [
+        vec![0u8; snap.v3.len()],
+        vec![0u8; snap.v2.len()],
+        vec![0u8; snap.ekubo.len()],
+    ];
+    for hop in paths.iter().flat_map(|path| path.as_ref()) {
+        let family = match hop.kind {
+            HopKind::V3 => 0,
+            HopKind::V2 => 1,
+            HopKind::Ekubo => 2,
+        };
+        let direction = 1 + u8::from(!hop.zero_for_one);
+        let slot = &mut seen[family][hop.index];
+        if *slot == 0 {
+            *slot = direction;
+        } else if *slot != direction {
+            return true;
         }
     }
     false
 }
 
 #[cfg(test)]
-fn greedy_alloc(
+fn greedy_alloc<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     chunks: u32,
 ) -> anyhow::Result<Option<Vec<U256>>> {
     greedy_alloc_with_budget(snap, paths, amount_in, chunks, &SolverBudget::unlimited())
 }
 
-fn greedy_alloc_with_budget(
+fn greedy_alloc_with_budget<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     chunks: u32,
     budget: &SolverBudget,
 ) -> anyhow::Result<Option<Vec<U256>>> {
     budget.checkpoint("route allocation")?;
-    if has_bidirectional_pool_use(paths) {
+    if has_bidirectional_pool_use(snap, paths) {
         return greedy_alloc_full_scan_with_budget(snap, paths, amount_in, chunks, budget);
     }
     let (mut v3s, mut v2s, mut ekubos) = working_states(snap);
@@ -1540,7 +1546,7 @@ fn greedy_alloc_with_budget(
                 if i.is_multiple_of(64) {
                     budget.checkpoint("route allocation")?;
                 }
-                let (out, _) = sim_path(snap, &v3s, &v2s, &ekubos, path, amount)?;
+                let (out, _) = sim_path(snap, &v3s, &v2s, &ekubos, path.as_ref(), amount)?;
                 if !out.is_zero() {
                     heap.push((out, std::cmp::Reverse(i)));
                 }
@@ -1555,7 +1561,7 @@ fn greedy_alloc_with_budget(
             let Some((_, std::cmp::Reverse(i))) = heap.pop() else {
                 return Ok(None);
             };
-            let (out, updates) = sim_path(snap, &v3s, &v2s, &ekubos, &paths[i], amount)?;
+            let (out, updates) = sim_path(snap, &v3s, &v2s, &ekubos, paths[i].as_ref(), amount)?;
             if out.is_zero() {
                 continue;
             }
@@ -1576,18 +1582,18 @@ fn greedy_alloc_with_budget(
 /// dependency invalidation keeps exact candidate values: after committing one
 /// chunk, every path sharing a changed pool is recomputed.
 #[cfg(test)]
-fn greedy_alloc_full_scan(
+fn greedy_alloc_full_scan<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     chunks: u32,
 ) -> anyhow::Result<Option<Vec<U256>>> {
     greedy_alloc_full_scan_with_budget(snap, paths, amount_in, chunks, &SolverBudget::unlimited())
 }
 
-fn greedy_alloc_full_scan_with_budget(
+fn greedy_alloc_full_scan_with_budget<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     chunks: u32,
     budget: &SolverBudget,
@@ -1600,7 +1606,7 @@ fn greedy_alloc_full_scan_with_budget(
     let mut v2_users = vec![Vec::new(); snap.v2.len()];
     let mut ekubo_users = vec![Vec::new(); snap.ekubo.len()];
     for (path_index, path) in paths.iter().enumerate() {
-        for hop in path {
+        for hop in path.as_ref() {
             let users = match hop.kind {
                 HopKind::V3 => &mut v3_users[hop.index],
                 HopKind::V2 => &mut v2_users[hop.index],
@@ -1618,7 +1624,7 @@ fn greedy_alloc_full_scan_with_budget(
             if path_index.is_multiple_of(64) {
                 budget.checkpoint("bidirectional route allocation")?;
             }
-            results.push(sim_path(snap, v3s, v2s, ekubos, path, amount)?);
+            results.push(sim_path(snap, v3s, v2s, ekubos, path.as_ref(), amount)?);
         }
         Ok::<_, anyhow::Error>(results)
     };
@@ -1652,7 +1658,7 @@ fn greedy_alloc_full_scan_with_budget(
         }
 
         let mut affected = vec![false; paths.len()];
-        for hop in &paths[best] {
+        for hop in paths[best].as_ref() {
             let users = match hop.kind {
                 HopKind::V3 => &v3_users[hop.index],
                 HopKind::V2 => &v2_users[hop.index],
@@ -1667,8 +1673,14 @@ fn greedy_alloc_full_scan_with_budget(
                 if path_index.is_multiple_of(64) {
                     budget.checkpoint("bidirectional route allocation")?;
                 }
-                candidates[path_index] =
-                    sim_path(snap, &v3s, &v2s, &ekubos, &paths[path_index], amount)?;
+                candidates[path_index] = sim_path(
+                    snap,
+                    &v3s,
+                    &v2s,
+                    &ekubos,
+                    paths[path_index].as_ref(),
+                    amount,
+                )?;
             }
         }
     }
@@ -1845,14 +1857,14 @@ impl<'a> ReplayState<'a> {
     }
 }
 
-fn resim_ordered(
+fn resim_ordered<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amounts: &[U256],
 ) -> anyhow::Result<Option<Plan>> {
     let mut replay = ReplayState::new(snap, paths.len());
     for (path, &amt) in paths.iter().zip(amounts) {
-        if !replay.push(snap, path, amt)? {
+        if !replay.push(snap, path.as_ref(), amt)? {
             return Ok(None);
         }
     }
@@ -1860,10 +1872,14 @@ fn resim_ordered(
 }
 
 /// Re-simulation in descending-allocation order — the order actions will run in.
-fn resim(snap: &Snapshot, paths: &[Vec<Hop>], alloc: &[U256]) -> anyhow::Result<Option<Plan>> {
+fn resim<P: AsRef<[Hop]>>(
+    snap: &Snapshot,
+    paths: &[P],
+    alloc: &[U256],
+) -> anyhow::Result<Option<Plan>> {
     let mut order: Vec<usize> = (0..alloc.len()).filter(|&i| !alloc[i].is_zero()).collect();
     order.sort_by(|&a, &b| alloc[b].cmp(&alloc[a])); // stable: ties keep enumeration order
-    let ordered_paths: Vec<Vec<Hop>> = order.iter().map(|&i| paths[i].clone()).collect();
+    let ordered_paths: Vec<&[Hop]> = order.iter().map(|&i| paths[i].as_ref()).collect();
     let ordered_amounts: Vec<U256> = order.iter().map(|&i| alloc[i]).collect();
     resim_ordered(snap, &ordered_paths, &ordered_amounts)
 }
@@ -2087,17 +2103,17 @@ fn polish_plan(
 }
 
 #[cfg(test)]
-fn best_single_plan(
+fn best_single_plan<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
 ) -> anyhow::Result<Option<Plan>> {
     best_single_plan_with_budget(snap, paths, amount_in, &SolverBudget::unlimited())
 }
 
-fn best_single_plan_with_budget(
+fn best_single_plan_with_budget<P: AsRef<[Hop]>>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     budget: &SolverBudget,
 ) -> anyhow::Result<Option<Plan>> {
@@ -2122,9 +2138,9 @@ fn best_single_plan_with_budget(
 }
 
 #[cfg(test)]
-fn best_split_plan(
+fn best_split_plan<P: AsRef<[Hop]> + Clone>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     chunks: u32,
     min_share_bps: u32,
@@ -2139,9 +2155,9 @@ fn best_split_plan(
     )
 }
 
-fn best_split_plan_with_budget(
+fn best_split_plan_with_budget<P: AsRef<[Hop]> + Clone>(
     snap: &Snapshot,
-    paths: &[Vec<Hop>],
+    paths: &[P],
     amount_in: U256,
     chunks: u32,
     min_share_bps: u32,
@@ -2178,7 +2194,7 @@ fn best_split_plan_with_budget(
     let threshold = muldiv(amount_in, U256::from(min_share_bps), U256::from(BPS_BASE))?;
     let live: Vec<usize> = (0..alloc.len()).filter(|&i| !alloc[i].is_zero()).collect();
     if live.len() > 1 && live.iter().any(|&i| alloc[i] < threshold) {
-        let mut strong: Vec<Vec<Hop>> = live
+        let mut strong: Vec<P> = live
             .iter()
             .filter(|&&i| alloc[i] >= threshold)
             .map(|&i| paths[i].clone())
@@ -2224,12 +2240,7 @@ fn best_split_plan_with_budget(
 ///
 /// Returned in the caller's own order so the re-solve enumerates them exactly
 /// as the full set did, which keeps the greedy's tie-breaks where they were.
-fn best_funded(
-    paths: &[Vec<Hop>],
-    alloc: &[U256],
-    funded: &[usize],
-    limit: usize,
-) -> Vec<Vec<Hop>> {
+fn best_funded<P: Clone>(paths: &[P], alloc: &[U256], funded: &[usize], limit: usize) -> Vec<P> {
     let mut order = funded.to_vec();
     order.sort_by(|&left, &right| alloc[right].cmp(&alloc[left]).then(left.cmp(&right)));
     order.truncate(limit);
@@ -2448,7 +2459,8 @@ mod tests {
             amount,
             &routes.budget,
         )?;
-        let paths = routes.candidate_path_sets(amount, chunks)?.combined;
+        let three_hop = routes.candidate_path_sets(amount, chunks)?;
+        let paths = routes.combined(&three_hop);
         let single =
             match best_single_plan_with_budget(routes.snap, &paths, amount, &routes.budget)? {
                 Some(mut plan) => {
@@ -2906,7 +2918,7 @@ mod tests {
         };
         let amount = U256::from(20_000);
         let routes = PreparedRoutes::new(&snap, token_in, token_out).unwrap();
-        let three_hop = routes.candidate_path_sets(amount, 64).unwrap().three_hop;
+        let three_hop = routes.candidate_path_sets(amount, 64).unwrap();
 
         assert!(three_hop.len() >= 2);
         assert!(

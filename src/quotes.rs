@@ -1264,23 +1264,25 @@ impl Round {
     }
 }
 
-/// Solve `universe` over `snap`. Certification waits for the plan that
-/// ships ([`certify_round`]).
-fn solve_round(
-    snap: &Snapshot,
+/// Solve `universe` over `snap`, and keep the route set: the escalation and
+/// the fair probe solve the same snapshot and universe again. Certification
+/// waits for the plan that ships ([`certify_round`]).
+fn solve_round<'a>(
+    snap: &'a Snapshot,
     universe: &RouteUniverse,
     amount_in: U256,
     budget: &SolverBudget,
-) -> anyhow::Result<Round> {
+) -> anyhow::Result<(Round, PreparedRoutes<'a>)> {
     let t = Instant::now();
     let routes = PreparedRoutes::for_universe_with_budget(snap, universe, budget.clone())?;
     let plan = routes.try_solve_quantized(amount_in, *ALLOC_CHUNKS, *MIN_SHARE_BPS)?;
-    Ok(Round {
+    let round = Round {
         plan,
         certificate: None,
         solve_ms: t.elapsed().as_millis() as u64,
         certificate_us: 0,
-    })
+    };
+    Ok((round, routes))
 }
 
 /// Certify `round`'s plan with `screening` priced beside it. The certificate
@@ -1288,8 +1290,10 @@ fn solve_round(
 /// cure. Only quotes the certificate has already proven loose pay for the
 /// second solve, and the better plan wins on output — the recertification
 /// keeps the reported bound honest for whichever plan ships.
+#[allow(clippy::too_many_arguments)] // the round's own snapshot, graph and budget
 fn certify_round(
     round: &mut Round,
+    routes: &PreparedRoutes<'_>,
     snap: &Snapshot,
     screening: &crate::snapshot::ScreeningPools,
     universe: &RouteUniverse,
@@ -1309,7 +1313,6 @@ fn certify_round(
         && *ESCALATE_BPS_E4 > 0
         && cert.gap_bps_e4 > *ESCALATE_BPS_E4
     {
-        let routes = PreparedRoutes::for_universe_with_budget(snap, universe, budget.clone())?;
         match routes.try_solve_quantized(amount_in, ESCALATED_CHUNKS, ESCALATED_MIN_SHARE) {
             Ok(Some(better)) if better.amount_out > plan.amount_out => {
                 result = certify_in_universe_with_budget(
@@ -1852,7 +1855,7 @@ async fn quote_swap_inner(
             .as_block_hash()
             .context("snapshot is not pinned to a canonical block hash")?;
         let mut universe = stamped.universe.orient(a, b)?;
-        let mut round = solve_round(&stamped.snap, &universe, amount_in, &budget)?;
+        let (mut round, first_routes) = solve_round(&stamped.snap, &universe, amount_in, &budget)?;
         let mut solve_ms = round.solve_ms;
 
         // A resident quote admits the connectors whose skeletons its probes
@@ -1939,7 +1942,9 @@ async fn quote_swap_inner(
                 };
                 let (next_universe, next) = next;
                 thin_tried |= next.thin_left_out > 0;
-                let next_round = solve_round(&next.snapshot, &next_universe, amount_in, &budget)?;
+                // Its route set borrows `next`, which the graph takes below.
+                let (next_round, _) =
+                    solve_round(&next.snapshot, &next_universe, amount_in, &budget)?;
                 solve_ms = solve_ms.saturating_add(next_round.solve_ms);
                 widening.rounds += 1;
                 // The wider graph's optimum is no worse, but the allocator is
@@ -1970,7 +1975,8 @@ async fn quote_swap_inner(
             if let Ok(full) = candidates.graph_with_thin(&everything)
                 && let Ok(full_universe) = full.universe.orient(a, b)
             {
-                let full_round = solve_round(&full.snapshot, &full_universe, amount_in, &budget)?;
+                let (full_round, _) =
+                    solve_round(&full.snapshot, &full_universe, amount_in, &budget)?;
                 solve_ms = solve_ms.saturating_add(full_round.solve_ms);
                 if full_round.plan.is_some() {
                     widening.admitted = everything
@@ -1990,10 +1996,22 @@ async fn quote_swap_inner(
         let snap = graph
             .as_ref()
             .map_or(&stamped.snap, |graph| &graph.snapshot);
+        // The shipped round's route set, for the escalation and the fair probe:
+        // the first round's when no wider graph shipped (the universe changes
+        // only with the graph), else one build over the graph that did.
+        let routes = match &graph {
+            None => first_routes,
+            Some(graph) => PreparedRoutes::for_universe_with_budget(
+                &graph.snapshot,
+                &universe,
+                budget.clone(),
+            )?,
+        };
         let screening = &stamped.screening;
         // Only the plan that ships is certified.
         certify_round(
             &mut round,
+            &routes,
             snap,
             screening,
             &universe,
@@ -2012,7 +2030,6 @@ async fn quote_swap_inner(
         );
 
         let t = Instant::now();
-        let routes = PreparedRoutes::for_universe_with_budget(snap, &universe, budget.clone())?;
         let native_last_prefix =
             if native_planning_enabled && a != cfg.profile.stable && b != cfg.profile.stable {
                 PreparedRoutes::for_profile_with_budget(
