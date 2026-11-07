@@ -350,8 +350,9 @@ pub struct PairStatus {
 pub struct Engine {
     profile: &'static ChainProfile,
     rpc: Rpc,
-    indexer: Option<Arc<IndexerClient>>,
     resident: Option<Arc<crate::resident::Resident>>,
+    /// Where the pulls come from: the profile's discovery, with its indexer.
+    source: Arc<dyn SnapshotSource>,
     start: Instant,
     pairs: Mutex<HashMap<(Address, Address), Arc<Pair>>>,
     pull_slots: Arc<Semaphore>,
@@ -374,12 +375,54 @@ fn canon(a: Address, b: Address) -> (Address, Address) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-struct PullContext {
+/// Where an engine's pulls come from: one observed snapshot of the pair
+/// `(a, b)`, read over `rpc` (the pull's own scoped probe of the engine's
+/// RPC) at `pin_block`, or at the head when it is `None`.
+pub(crate) trait SnapshotSource: Send + Sync {
+    fn pull<'a>(
+        &'a self,
+        rpc: &'a Rpc,
+        a: Address,
+        b: Address,
+        pin_block: Option<u64>,
+    ) -> BoxFuture<'a, anyhow::Result<state::ObservedSnapshot>>;
+}
+
+/// The production source: the profile's discovery, with the indexer and the
+/// resident list the engine was built with.
+struct StatePull {
     profile: &'static ChainProfile,
-    rpc: Rpc,
     indexer: Option<Arc<IndexerClient>>,
     /// Where a pull finds its skeletons through resident connectors.
     resident: Option<Arc<crate::resident::Resident>>,
+}
+
+impl SnapshotSource for StatePull {
+    fn pull<'a>(
+        &'a self,
+        rpc: &'a Rpc,
+        a: Address,
+        b: Address,
+        pin_block: Option<u64>,
+    ) -> BoxFuture<'a, anyhow::Result<state::ObservedSnapshot>> {
+        state::snapshot_at_observed_for(
+            self.profile,
+            rpc,
+            self.indexer.as_deref(),
+            a,
+            b,
+            pin_block,
+            self.resident
+                .as_deref()
+                .map(|resident| resident as &dyn state::ListedPaths),
+        )
+        .boxed()
+    }
+}
+
+struct PullContext {
+    source: Arc<dyn SnapshotSource>,
+    rpc: Rpc,
     pull_slots: Arc<Semaphore>,
     pin_block: Option<u64>,
 }
@@ -423,20 +466,11 @@ async fn start_pull(
         let _permit = permit;
         let result = async {
             let started = Instant::now();
-            let observed = state::snapshot_at_observed_for(
-                context.profile,
-                &rpc,
-                context.indexer.as_deref(),
-                key.0,
-                key.1,
-                context.pin_block,
-                context
-                    .resident
-                    .as_deref()
-                    .map(|resident| resident as &dyn state::ListedPaths),
-            )
-            .await
-            .map_err(PullFailure::capture)?;
+            let observed = context
+                .source
+                .pull(&rpc, key.0, key.1, context.pin_block)
+                .await
+                .map_err(PullFailure::capture)?;
             Ok((
                 Stamped::new(observed, rpc.probed_calls()),
                 started.elapsed(),
@@ -495,11 +529,16 @@ impl Engine {
         resident: Option<Arc<crate::resident::Resident>>,
     ) -> Arc<Engine> {
         let snapshot_concurrency = rpc.snapshot_concurrency();
+        let source = Arc::new(StatePull {
+            profile,
+            indexer,
+            resident: resident.clone(),
+        });
         Arc::new(Engine {
             profile,
             rpc,
-            indexer,
             resident,
+            source,
             start: Instant::now(),
             pairs: Mutex::new(HashMap::new()),
             pull_slots: Arc::new(Semaphore::new(snapshot_concurrency)),
@@ -534,11 +573,16 @@ impl Engine {
         pin_block: Option<u64>,
     ) -> Arc<Engine> {
         let snapshot_concurrency = rpc.snapshot_concurrency();
+        let source = Arc::new(StatePull {
+            profile,
+            indexer,
+            resident: None,
+        });
         Arc::new(Engine {
             profile,
             rpc,
-            indexer,
             resident: None,
+            source,
             start: Instant::now(),
             pairs: Mutex::new(HashMap::new()),
             pull_slots: Arc::new(Semaphore::new(snapshot_concurrency)),
@@ -597,10 +641,8 @@ impl Engine {
 
     fn pull_context(&self) -> PullContext {
         PullContext {
-            profile: self.profile,
+            source: self.source.clone(),
             rpc: self.rpc.clone(),
-            indexer: self.indexer.clone(),
-            resident: self.resident.clone(),
             pull_slots: self.pull_slots.clone(),
             pin_block: self.pin_block,
         }
@@ -804,9 +846,7 @@ async fn refresh(engine: Arc<Engine>, key: (Address, Address), pair: Arc<Pair>) 
 mod tests {
     use super::*;
     use alloy_primitives::address;
-    use axum::{Json, Router, extract::State, routing::post};
     use futures_util::future::join_all;
-    use serde_json::{Value, json};
     use std::sync::atomic::AtomicUsize;
 
     #[test]
@@ -1193,54 +1233,75 @@ mod tests {
         );
     }
 
-    async fn failed_rpc(
-        State(calls): State<Arc<AtomicUsize>>,
-        Json(request): Json<Value>,
-    ) -> Json<Value> {
-        calls.fetch_add(1, Ordering::Relaxed);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        Json(json!({
-            "jsonrpc": "2.0",
-            "id": request["id"],
-            "error": {"code": -32000, "message": "forced failure"}
-        }))
+    /// A source that counts its pulls and fails each one after `delay`: the
+    /// tests below measure the engine's own contract (one pull per pair, the
+    /// permit released, no detached work), not how many calls a discovery
+    /// makes before it fails.
+    struct FailingSource {
+        pulls: AtomicUsize,
+        delay: Duration,
+    }
+
+    impl FailingSource {
+        fn new(delay: Duration) -> Arc<Self> {
+            Arc::new(Self {
+                pulls: AtomicUsize::new(0),
+                delay,
+            })
+        }
+    }
+
+    impl SnapshotSource for FailingSource {
+        fn pull<'a>(
+            &'a self,
+            _rpc: &'a Rpc,
+            _a: Address,
+            _b: Address,
+            _pin_block: Option<u64>,
+        ) -> BoxFuture<'a, anyhow::Result<state::ObservedSnapshot>> {
+            async move {
+                self.pulls.fetch_add(1, Ordering::Relaxed);
+                tokio::time::sleep(self.delay).await;
+                Err(anyhow::anyhow!("forced failure"))
+            }
+            .boxed()
+        }
+    }
+
+    /// An engine like `Engine::new`'s, pulling from `source`.
+    fn engine_with_source(source: Arc<dyn SnapshotSource>) -> Arc<Engine> {
+        let rpc = Rpc::connect("http://127.0.0.1:1").unwrap();
+        let snapshot_concurrency = rpc.snapshot_concurrency();
+        Arc::new(Engine {
+            profile: &ROBINHOOD_PROFILE,
+            rpc,
+            resident: None,
+            source,
+            start: Instant::now(),
+            pairs: Mutex::new(HashMap::new()),
+            pull_slots: Arc::new(Semaphore::new(snapshot_concurrency)),
+            refresh_enabled: true,
+            pin_block: None,
+        })
     }
 
     #[tokio::test]
     async fn failed_cold_pull_is_shared_by_all_waiters() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let app = Router::new()
-            .route("/", post(failed_rpc))
-            .with_state(calls.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let engine = Engine::new(Rpc::connect(&format!("http://{address}")).unwrap());
+        let source = FailingSource::new(Duration::from_millis(100));
+        let engine = engine_with_source(source.clone());
         let a = Address::repeat_byte(0x11);
         let b = Address::repeat_byte(0x22);
 
         let results = join_all((0..5).map(|_| engine.snapshot(a, b))).await;
 
         assert!(results.iter().all(Result::is_err));
-        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert_eq!(source.pulls.load(Ordering::Relaxed), 1);
         assert_eq!(engine.pairs.lock().expect("pairs lock").len(), 1);
-        server.abort();
     }
 
     #[tokio::test]
     async fn cancelled_waiter_cannot_pin_a_snapshot_permit() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let app = Router::new()
-            .route("/", post(failed_rpc))
-            .with_state(calls.clone());
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-        let rpc = Rpc::connect(&format!("http://{address}")).unwrap();
+        let source = FailingSource::new(Duration::from_millis(100));
         let slots = Arc::new(Semaphore::new(1));
         let pair = Arc::new(Pair::new());
         let (_, pull) = {
@@ -1250,10 +1311,8 @@ mod tests {
                 pair.clone(),
                 canon(Address::repeat_byte(0x31), Address::repeat_byte(0x32)),
                 PullContext {
-                    profile: &ROBINHOOD_PROFILE,
-                    rpc,
-                    indexer: None,
-                    resident: None,
+                    source: source.clone(),
+                    rpc: Rpc::connect("http://127.0.0.1:1").unwrap(),
                     pull_slots: slots.clone(),
                     pin_block: None,
                 },
@@ -1267,7 +1326,7 @@ mod tests {
             tokio::time::timeout(Duration::from_millis(10), pull)
                 .await
                 .is_err(),
-            "the waiter must cancel while the upstream call is in flight"
+            "the waiter must cancel while the pull is in flight"
         );
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
@@ -1280,8 +1339,7 @@ mod tests {
         })
         .await
         .expect("spawned snapshot owner must release its permit and clear its generation");
-        assert!(calls.load(Ordering::Relaxed) > 0);
-        server.abort();
+        assert_eq!(source.pulls.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -1298,10 +1356,8 @@ mod tests {
                 owner_pair.clone(),
                 owner_key,
                 PullContext {
-                    profile: &ROBINHOOD_PROFILE,
+                    source: FailingSource::new(Duration::ZERO),
                     rpc,
-                    indexer: None,
-                    resident: None,
                     pull_slots: slots,
                     pin_block: None,
                 },
@@ -1341,10 +1397,8 @@ mod tests {
             pair.clone(),
             canon(Address::ZERO, test_address(1)),
             PullContext {
-                profile: &ROBINHOOD_PROFILE,
+                source: FailingSource::new(Duration::ZERO),
                 rpc: Rpc::connect("http://127.0.0.1:1").unwrap(),
-                indexer: None,
-                resident: None,
                 pull_slots: Arc::new(Semaphore::new(0)),
                 pin_block: None,
             },
