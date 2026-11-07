@@ -7,7 +7,7 @@ pub(crate) use sextant_amm::{pools, snapshot, venue};
 pub(crate) use sextant_chain::{catalog, chain};
 pub(crate) use sextant_discovery::{indexer, lens, state};
 pub(crate) use sextant_io::{rpc, rpc_dispatch};
-pub(crate) use sextant_route::{route, topology, universe};
+pub(crate) use sextant_route::{counterfactual, route, topology, universe};
 
 pub mod engine;
 pub(crate) mod freshness;

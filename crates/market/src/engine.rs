@@ -32,6 +32,7 @@
 use crate::chain::ChainProfile;
 #[cfg(any(test, feature = "testing"))]
 use crate::chain::ROBINHOOD_PROFILE;
+use crate::counterfactual::CoverageCache;
 use crate::freshness::{FINISH_GRACE, STALE};
 use crate::indexer::IndexerClient;
 use crate::rpc::{Rpc, sanitized_error};
@@ -351,6 +352,10 @@ pub struct Engine {
     profile: &'static ChainProfile,
     rpc: Rpc,
     resident: Option<Arc<crate::resident::Resident>>,
+    /// The coverage verdicts this engine's quotes measured. Its pulls hand it
+    /// to connector admission, so what quotes learned reaches discovery only
+    /// through here.
+    coverage: Arc<CoverageCache>,
     /// Where the pulls come from: the profile's discovery, with its indexer.
     source: Arc<dyn SnapshotSource>,
     start: Instant,
@@ -388,13 +393,14 @@ pub(crate) trait SnapshotSource: Send + Sync {
     ) -> BoxFuture<'a, anyhow::Result<state::ObservedSnapshot>>;
 }
 
-/// The production source: the profile's discovery, with the indexer and the
-/// resident list the engine was built with.
+/// The production source: the profile's discovery, with the indexer, the
+/// resident list and the coverage cache the engine was built with.
 struct StatePull {
     profile: &'static ChainProfile,
     indexer: Option<Arc<IndexerClient>>,
     /// Where a pull finds its skeletons through resident connectors.
     resident: Option<Arc<crate::resident::Resident>>,
+    coverage: Arc<CoverageCache>,
 }
 
 impl SnapshotSource for StatePull {
@@ -415,6 +421,7 @@ impl SnapshotSource for StatePull {
             self.resident
                 .as_deref()
                 .map(|resident| resident as &dyn state::ListedPaths),
+            Some(&self.coverage),
         )
         .boxed()
     }
@@ -529,15 +536,18 @@ impl Engine {
         resident: Option<Arc<crate::resident::Resident>>,
     ) -> Arc<Engine> {
         let snapshot_concurrency = rpc.snapshot_concurrency();
+        let coverage = Arc::new(CoverageCache::default());
         let source = Arc::new(StatePull {
             profile,
             indexer,
             resident: resident.clone(),
+            coverage: coverage.clone(),
         });
         Arc::new(Engine {
             profile,
             rpc,
             resident,
+            coverage,
             source,
             start: Instant::now(),
             pairs: Mutex::new(HashMap::new()),
@@ -573,15 +583,18 @@ impl Engine {
         pin_block: Option<u64>,
     ) -> Arc<Engine> {
         let snapshot_concurrency = rpc.snapshot_concurrency();
+        let coverage = Arc::new(CoverageCache::default());
         let source = Arc::new(StatePull {
             profile,
             indexer,
             resident: None,
+            coverage: coverage.clone(),
         });
         Arc::new(Engine {
             profile,
             rpc,
             resident: None,
+            coverage,
             source,
             start: Instant::now(),
             pairs: Mutex::new(HashMap::new()),
@@ -597,6 +610,12 @@ impl Engine {
 
     pub fn rpc(&self) -> &Rpc {
         &self.rpc
+    }
+
+    /// The coverage verdicts this engine's quotes measured, which its pulls
+    /// hand to connector admission.
+    pub fn coverage_cache(&self) -> &CoverageCache {
+        &self.coverage
     }
 
     pub fn resident(&self) -> Option<&Arc<crate::resident::Resident>> {
@@ -1276,6 +1295,7 @@ mod tests {
             profile: &ROBINHOOD_PROFILE,
             rpc,
             resident: None,
+            coverage: Arc::default(),
             source,
             start: Instant::now(),
             pairs: Mutex::new(HashMap::new()),

@@ -10,6 +10,7 @@ use super::sorted_pair;
 use super::v4_keys::v4_tokens_from_currencies_for;
 use crate::catalog::IndexedEvmDiscovery;
 use crate::chain::ChainProfile;
+use crate::counterfactual::CoverageCache;
 use crate::indexer::IndexerClient;
 use crate::pools::{V2Pool, V3Pool};
 use crate::route::BASELINE_PATH_CANDIDATE_CAP;
@@ -114,6 +115,7 @@ pub(super) fn augmented_availability_fallback(
 /// `listed` are skeletons from the resident list, through the resident's
 /// connectors beyond the profile's, where the list has their pools. They join
 /// the profile-only universe; the adjacency modes never see them.
+#[allow(clippy::too_many_arguments)] // the pair, its pin, and what the engine already knows
 pub(super) async fn indexed_route_universe(
     profile: &ChainProfile,
     discovery: &IndexedEvmDiscovery,
@@ -122,6 +124,7 @@ pub(super) async fn indexed_route_universe(
     token_out: Address,
     pin_block: Option<u64>,
     listed: &[Vec<Address>],
+    coverage: Option<&CoverageCache>,
 ) -> anyhow::Result<RouteUniverse> {
     let mode = *DYNAMIC_CONNECTORS;
     if pin_block.is_some() || mode == DynamicConnectorMode::ProfileOnly {
@@ -170,7 +173,8 @@ pub(super) async fn indexed_route_universe(
     }
     match selection {
         Ok(selection) => {
-            let selection = admit_by_certified_value(profile, token_in, token_out, selection);
+            let selection =
+                admit_by_certified_value(profile, coverage, token_in, token_out, selection);
             RouteUniverse::adjacency_complete(profile, token_in, token_out, selection).or_else(
                 |error| {
                     // `invalid_response` names the indexer, and this arm reaches
@@ -241,13 +245,15 @@ pub(super) fn retain_allowlisted(profile: &ChainProfile, selection: &mut Connect
 /// A no-op without evidence, which is the common case: nothing has measured
 /// this pair until connector screening has run for it inside the coverage
 /// lease, and with no proven-idle incumbent there is no slot this rule is
-/// allowed to touch.
+/// allowed to touch. The evidence is what `coverage`, the engine's cache, holds
+/// for the pair; a caller without one has none.
 ///
 /// `token_in` and `token_out` arrive already canonicalized by the engine's
 /// `canon`, so they name the pair rather than the traffic's direction. Verdicts
 /// are filed under the direction quoted, which is why the lookup reads both.
 fn admit_by_certified_value(
     profile: &ChainProfile,
+    coverage: Option<&CoverageCache>,
     token_in: Address,
     token_out: Address,
     mut selection: ConnectorSelection,
@@ -255,8 +261,10 @@ fn admit_by_certified_value(
     if !*CONNECTOR_ADMISSION || selection.screened.is_empty() {
         return selection;
     }
-    let evidence =
-        crate::counterfactual::certified_admission(profile.chain_id, token_in, token_out);
+    let Some(coverage) = coverage else {
+        return selection;
+    };
+    let evidence = coverage.certified_admission(profile.chain_id, token_in, token_out);
     if evidence.idle.is_empty() {
         return selection;
     }

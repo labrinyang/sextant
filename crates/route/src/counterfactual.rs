@@ -139,8 +139,15 @@ impl CoverageEntry {
     }
 }
 
-static COVERAGE_CACHE: LazyLock<Mutex<HashMap<CoverageKey, CoverageEntry>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// The verdicts `coverage` measured, each kept for twice its TTL
+/// (`CoverageEntry::retained`). The quote path files them, and connector
+/// admission reads them back through `certified_admission` when discovery
+/// builds the pair's next universe. The engine owns one and hands it to both,
+/// so this flow from the quotes back into discovery shows in their signatures.
+#[derive(Default)]
+pub struct CoverageCache {
+    entries: Mutex<HashMap<CoverageKey, CoverageEntry>>,
+}
 
 /// Binary magnitude of the trade.
 ///
@@ -165,80 +172,85 @@ pub struct CoverageReading {
     pub age: Duration,
 }
 
-/// `measure_coverage`, amortized over the topology lease.
-///
-/// A hit returns the stored verdict; a miss measures and stores. Declining to
-/// answer is never stored: the cheap decline (nothing screened is reachable)
-/// costs almost nothing to re-derive, and the expensive one (a non-monotone
-/// solve) is a property of one allocator run rather than of the universe, so
-/// caching it would suppress measurement for a full lease off a single hiccup.
-#[allow(clippy::too_many_arguments)]
-pub fn coverage(
-    snap: &Snapshot,
-    universe: &RouteUniverse,
-    screening: &ScreeningPools,
-    served: &Plan,
-    loss_bound_bps_e4: U256,
-    achieved: U256,
-    amount_in: U256,
-    chunks: u32,
-    min_share_bps: u32,
-    budget: &SolverBudget,
-) -> anyhow::Result<Option<CoverageReading>> {
-    let ttl = Duration::from_secs(*COVERAGE_TTL);
-    let (token_in, token_out) = universe.endpoints();
-    let fingerprint = universe.fingerprint();
-    let key = (
-        universe.chain_id(),
-        token_in,
-        token_out,
-        size_bucket(amount_in),
-    );
-    // Reporting requires the fingerprint to match: a `total_gain` measured over
-    // another universe describes connectors this shortlist may no longer offer.
-    // A mismatch re-measures and overwrites, which is also what keeps the entry
-    // admission reads from drifting behind the current topology.
-    if !ttl.is_zero()
-        && let Some(reading) = cached_coverage(key, fingerprint)
-    {
-        return Ok(Some(reading));
+impl CoverageCache {
+    /// `measure_coverage`, amortized over the topology lease.
+    ///
+    /// A hit returns the stored verdict; a miss measures and stores. Declining to
+    /// answer is never stored: the cheap decline (nothing screened is reachable)
+    /// costs almost nothing to re-derive, and the expensive one (a non-monotone
+    /// solve) is a property of one allocator run rather than of the universe, so
+    /// caching it would suppress measurement for a full lease off a single hiccup.
+    #[allow(clippy::too_many_arguments)]
+    pub fn coverage(
+        &self,
+        snap: &Snapshot,
+        universe: &RouteUniverse,
+        screening: &ScreeningPools,
+        served: &Plan,
+        loss_bound_bps_e4: U256,
+        achieved: U256,
+        amount_in: U256,
+        chunks: u32,
+        min_share_bps: u32,
+        budget: &SolverBudget,
+    ) -> anyhow::Result<Option<CoverageReading>> {
+        let ttl = Duration::from_secs(*COVERAGE_TTL);
+        let (token_in, token_out) = universe.endpoints();
+        let fingerprint = universe.fingerprint();
+        let key = (
+            universe.chain_id(),
+            token_in,
+            token_out,
+            size_bucket(amount_in),
+        );
+        // Reporting requires the fingerprint to match: a `total_gain` measured over
+        // another universe describes connectors this shortlist may no longer offer.
+        // A mismatch re-measures and overwrites, which is also what keeps the entry
+        // admission reads from drifting behind the current topology.
+        if !ttl.is_zero()
+            && let Some(reading) = self.cached_coverage(key, fingerprint)
+        {
+            return Ok(Some(reading));
+        }
+        let Some(value) = measure_coverage(
+            snap,
+            universe,
+            screening,
+            served,
+            loss_bound_bps_e4,
+            achieved,
+            amount_in,
+            chunks,
+            min_share_bps,
+            budget,
+        )?
+        else {
+            return Ok(None);
+        };
+        if !ttl.is_zero() {
+            self.store_coverage(key, fingerprint, &value, amount_in, ttl);
+        }
+        Ok(Some(CoverageReading {
+            value,
+            measured_in: amount_in,
+            age: Duration::ZERO,
+        }))
     }
-    let Some(value) = measure_coverage(
-        snap,
-        universe,
-        screening,
-        served,
-        loss_bound_bps_e4,
-        achieved,
-        amount_in,
-        chunks,
-        min_share_bps,
-        budget,
-    )?
-    else {
-        return Ok(None);
-    };
-    if !ttl.is_zero() {
-        store_coverage(key, fingerprint, &value, amount_in, ttl);
-    }
-    Ok(Some(CoverageReading {
-        value,
-        measured_in: amount_in,
-        age: Duration::ZERO,
-    }))
 }
 
-fn cached_coverage(key: CoverageKey, fingerprint: B256) -> Option<CoverageReading> {
-    let mut cache = COVERAGE_CACHE.lock().expect("coverage cache lock");
-    cache.retain(|_, entry| entry.retained());
-    cache
-        .get(&key)
-        .filter(|entry| entry.readable() && entry.fingerprint == fingerprint)
-        .map(|entry| CoverageReading {
-            value: entry.value.clone(),
-            measured_in: entry.amount_in,
-            age: entry.at.elapsed(),
-        })
+impl CoverageCache {
+    fn cached_coverage(&self, key: CoverageKey, fingerprint: B256) -> Option<CoverageReading> {
+        let mut cache = self.entries.lock().expect("coverage cache lock");
+        cache.retain(|_, entry| entry.retained());
+        cache
+            .get(&key)
+            .filter(|entry| entry.readable() && entry.fingerprint == fingerprint)
+            .map(|entry| CoverageReading {
+                value: entry.value.clone(),
+                measured_in: entry.amount_in,
+                age: entry.at.elapsed(),
+            })
+    }
 }
 
 /// Everything admission is allowed to act on for this pair, merged across every
@@ -275,94 +287,97 @@ pub struct AdmissionEvidence {
     pub bands: usize,
 }
 
-/// Merge every live band's verdict for this pair into one admission decision.
-///
-/// `idle` intersects and `loss_bound_bps_e4` takes the maximum: a connector is
-/// only free to lose if every band proved it idle, and the cost of losing it is
-/// the worst band's certified gap. Both are unchanged and both are the safe
-/// direction.
-///
-/// `gains` takes the MAXIMUM, and that is a change from §20's minimum. The
-/// reason it had to change, and exactly what it costs:
-///
-/// **Why the minimum closed the window.** One connector set serves every size,
-/// so §20 required a candidate to clear the bound in the worst band. But a
-/// two-hop connector is worth nothing below some size — it pays an extra LP fee
-/// (§11) — so any pair taking both small and large trades has a small-band
-/// verdict pricing every candidate at zero, and `min = 0` can never clear a
-/// positive bound. §25 measured the consequence: 181 of 181 declines, with
-/// USDC on WBNB→USDT worth 3.3269 bp at 3,000 and 0.2153 bp at 100, its merged
-/// value falling 7× the moment the 100-band entered retention. That is not
-/// conservatism about *when* to promote; it is a rule that cannot fire.
-///
-/// **What replaces it.** Let `g_b` be the candidate's verdict in band `b` and
-/// `L` the worst band's certified eviction cost. Every `g_b ≥ 0`, because a
-/// marginal is a gain or an unused offer. So over the `|B|` live bands,
-/// `Σ_b (g_b − L) ≥ max_b g_b − |B|·L`,
-/// and `admit_by_certified_value` requires `max_b g_b > |B|·L`. **Even if the
-/// candidate delivers nothing in every band but one, and the eviction costs
-/// its full certified bound in every band, the swap is still ahead.** No
-/// incumbent is compared against a candidate anywhere in that argument — the
-/// property §19 cost 142 bp to learn — and `L` still carries the churn floor
-/// `state.rs` folds into it.
-///
-/// **What it costs, stated plainly.** The minimum guaranteed no band could be
-/// worse off. This guarantees the bands are not worse off *in total*, which is
-/// weaker: a single small-band quote can lose up to `L` so that large ones
-/// gain. `L` is what makes that trade defensible rather than a guess — §25
-/// measured it at 0.0000 on five of seven pairs and 0.3529 at its worst, against
-/// gains of 20 to 790 bp. The rule forfeits a bounded, certified, sub-basis-point
-/// amount at one size to win two to three orders of magnitude more at another.
-pub fn certified_admission(
-    chain_id: u64,
-    token_in: Address,
-    token_out: Address,
-) -> AdmissionEvidence {
-    let quoted: PairKey = (chain_id, token_in, token_out);
-    let reversed: PairKey = (chain_id, token_out, token_in);
-    let mut cache = COVERAGE_CACHE.lock().expect("coverage cache lock");
-    cache.retain(|_, entry| entry.retained());
+impl CoverageCache {
+    /// Merge every live band's verdict for this pair into one admission decision.
+    ///
+    /// `idle` intersects and `loss_bound_bps_e4` takes the maximum: a connector is
+    /// only free to lose if every band proved it idle, and the cost of losing it is
+    /// the worst band's certified gap. Both are unchanged and both are the safe
+    /// direction.
+    ///
+    /// `gains` takes the MAXIMUM, and that is a change from §20's minimum. The
+    /// reason it had to change, and exactly what it costs:
+    ///
+    /// **Why the minimum closed the window.** One connector set serves every size,
+    /// so §20 required a candidate to clear the bound in the worst band. But a
+    /// two-hop connector is worth nothing below some size — it pays an extra LP fee
+    /// (§11) — so any pair taking both small and large trades has a small-band
+    /// verdict pricing every candidate at zero, and `min = 0` can never clear a
+    /// positive bound. §25 measured the consequence: 181 of 181 declines, with
+    /// USDC on WBNB→USDT worth 3.3269 bp at 3,000 and 0.2153 bp at 100, its merged
+    /// value falling 7× the moment the 100-band entered retention. That is not
+    /// conservatism about *when* to promote; it is a rule that cannot fire.
+    ///
+    /// **What replaces it.** Let `g_b` be the candidate's verdict in band `b` and
+    /// `L` the worst band's certified eviction cost. Every `g_b ≥ 0`, because a
+    /// marginal is a gain or an unused offer. So over the `|B|` live bands,
+    /// `Σ_b (g_b − L) ≥ max_b g_b − |B|·L`,
+    /// and `admit_by_certified_value` requires `max_b g_b > |B|·L`. **Even if the
+    /// candidate delivers nothing in every band but one, and the eviction costs
+    /// its full certified bound in every band, the swap is still ahead.** No
+    /// incumbent is compared against a candidate anywhere in that argument — the
+    /// property §19 cost 142 bp to learn — and `L` still carries the churn floor
+    /// `state.rs` folds into it.
+    ///
+    /// **What it costs, stated plainly.** The minimum guaranteed no band could be
+    /// worse off. This guarantees the bands are not worse off *in total*, which is
+    /// weaker: a single small-band quote can lose up to `L` so that large ones
+    /// gain. `L` is what makes that trade defensible rather than a guess — §25
+    /// measured it at 0.0000 on five of seven pairs and 0.3529 at its worst, against
+    /// gains of 20 to 790 bp. The rule forfeits a bounded, certified, sub-basis-point
+    /// amount at one size to win two to three orders of magnitude more at another.
+    pub fn certified_admission(
+        &self,
+        chain_id: u64,
+        token_in: Address,
+        token_out: Address,
+    ) -> AdmissionEvidence {
+        let quoted: PairKey = (chain_id, token_in, token_out);
+        let reversed: PairKey = (chain_id, token_out, token_in);
+        let mut cache = self.entries.lock().expect("coverage cache lock");
+        cache.retain(|_, entry| entry.retained());
 
-    let mut evidence = AdmissionEvidence::default();
-    let mut idle: Option<Vec<Address>> = None;
-    for (key, entry) in cache.iter() {
-        let pair = (key.0, key.1, key.2);
-        if pair != quoted && pair != reversed {
-            continue;
+        let mut evidence = AdmissionEvidence::default();
+        let mut idle: Option<Vec<Address>> = None;
+        for (key, entry) in cache.iter() {
+            let pair = (key.0, key.1, key.2);
+            if pair != quoted && pair != reversed {
+                continue;
+            }
+            evidence.loss_bound_bps_e4 = evidence
+                .loss_bound_bps_e4
+                .max(entry.value.loss_bound_bps_e4);
+            idle = Some(match idle {
+                None => entry.value.idle.clone(),
+                Some(seen) => seen
+                    .into_iter()
+                    .filter(|connector| entry.value.idle.contains(connector))
+                    .collect(),
+            });
+            // This band's own verdict, assembled before it meets the others. A
+            // candidate OFFERED to a measurement and left unused is worth zero at
+            // that size, and that is a verdict; one the widened plan routed carries
+            // its marginal. Assembling per band first keeps a zero attributable to
+            // the band that produced it rather than to the candidate.
+            let mut band: HashMap<Address, U256> = HashMap::new();
+            for connector in &entry.value.offered {
+                band.insert(*connector, U256::ZERO);
+            }
+            for marginal in &entry.value.marginals {
+                band.insert(marginal.connector, marginal.marginal_bps_e4);
+            }
+            for (connector, gain) in band {
+                evidence
+                    .gains
+                    .entry(connector)
+                    .and_modify(|slot| *slot = (*slot).max(gain))
+                    .or_insert(gain);
+            }
+            evidence.bands += 1;
         }
-        evidence.loss_bound_bps_e4 = evidence
-            .loss_bound_bps_e4
-            .max(entry.value.loss_bound_bps_e4);
-        idle = Some(match idle {
-            None => entry.value.idle.clone(),
-            Some(seen) => seen
-                .into_iter()
-                .filter(|connector| entry.value.idle.contains(connector))
-                .collect(),
-        });
-        // This band's own verdict, assembled before it meets the others. A
-        // candidate OFFERED to a measurement and left unused is worth zero at
-        // that size, and that is a verdict; one the widened plan routed carries
-        // its marginal. Assembling per band first keeps a zero attributable to
-        // the band that produced it rather than to the candidate.
-        let mut band: HashMap<Address, U256> = HashMap::new();
-        for connector in &entry.value.offered {
-            band.insert(*connector, U256::ZERO);
-        }
-        for marginal in &entry.value.marginals {
-            band.insert(marginal.connector, marginal.marginal_bps_e4);
-        }
-        for (connector, gain) in band {
-            evidence
-                .gains
-                .entry(connector)
-                .and_modify(|slot| *slot = (*slot).max(gain))
-                .or_insert(gain);
-        }
-        evidence.bands += 1;
+        evidence.idle = idle.unwrap_or_default();
+        evidence
     }
-    evidence.idle = idle.unwrap_or_default();
-    evidence
 }
 
 /// Give a slot held by a PROVEN-IDLE connector to a candidate whose measured
@@ -464,64 +479,70 @@ pub fn admit_by_certified_value(
     reordered
 }
 
-fn store_coverage(
-    key: CoverageKey,
-    fingerprint: B256,
-    value: &CoverageValue,
-    amount_in: U256,
-    ttl: Duration,
-) {
-    let mut cache = COVERAGE_CACHE.lock().expect("coverage cache lock");
-    cache.retain(|_, entry| entry.retained());
-    if !cache.contains_key(&key)
-        && cache.len() >= COVERAGE_CACHE_CAP
-        && let Some(oldest) = cache
-            .iter()
-            .min_by_key(|(key, entry)| (entry.at, **key))
-            .map(|(key, _)| *key)
-    {
-        cache.remove(&oldest);
+impl CoverageCache {
+    fn store_coverage(
+        &self,
+        key: CoverageKey,
+        fingerprint: B256,
+        value: &CoverageValue,
+        amount_in: U256,
+        ttl: Duration,
+    ) {
+        let mut cache = self.entries.lock().expect("coverage cache lock");
+        cache.retain(|_, entry| entry.retained());
+        if !cache.contains_key(&key)
+            && cache.len() >= COVERAGE_CACHE_CAP
+            && let Some(oldest) = cache
+                .iter()
+                .min_by_key(|(key, entry)| (entry.at, **key))
+                .map(|(key, _)| *key)
+        {
+            cache.remove(&oldest);
+        }
+        cache.insert(
+            key,
+            CoverageEntry {
+                value: value.clone(),
+                fingerprint,
+                amount_in,
+                at: Instant::now(),
+                ttl,
+            },
+        );
     }
-    cache.insert(
-        key,
-        CoverageEntry {
-            value: value.clone(),
-            fingerprint,
-            amount_in,
-            at: Instant::now(),
-            ttl,
-        },
-    );
 }
 
-/// File a verdict as though it had been measured `age` ago.
-///
-/// Admission reads at topology rotation, one whole lease after the verdict was
-/// written, so every question about its horizon is a question about an old
-/// entry. Real time does not run backwards, so the test places the entry where
-/// the question is.
 #[cfg(test)]
-fn store_coverage_aged(
-    key: CoverageKey,
-    fingerprint: B256,
-    value: &CoverageValue,
-    amount_in: U256,
-    ttl: Duration,
-    age: Duration,
-) {
-    let mut cache = COVERAGE_CACHE.lock().expect("coverage cache lock");
-    cache.insert(
-        key,
-        CoverageEntry {
-            value: value.clone(),
-            fingerprint,
-            amount_in,
-            at: Instant::now()
-                .checked_sub(age)
-                .expect("test clock predates the process"),
-            ttl,
-        },
-    );
+impl CoverageCache {
+    /// File a verdict as though it had been measured `age` ago.
+    ///
+    /// Admission reads at topology rotation, one whole lease after the verdict was
+    /// written, so every question about its horizon is a question about an old
+    /// entry. Real time does not run backwards, so the test places the entry where
+    /// the question is.
+    fn store_coverage_aged(
+        &self,
+        key: CoverageKey,
+        fingerprint: B256,
+        value: &CoverageValue,
+        amount_in: U256,
+        ttl: Duration,
+        age: Duration,
+    ) {
+        let mut cache = self.entries.lock().expect("coverage cache lock");
+        cache.insert(
+            key,
+            CoverageEntry {
+                value: value.clone(),
+                fingerprint,
+                amount_in,
+                at: Instant::now()
+                    .checked_sub(age)
+                    .expect("test clock predates the process"),
+                ttl,
+            },
+        );
+    }
 }
 
 /// What removing one connector from the widened universe costs.
@@ -1835,6 +1856,7 @@ mod tests {
     /// the others still has to cover the whole swap.
     #[test]
     fn evidence_merges_conservatively_across_bands() {
+        let cache = CoverageCache::default();
         let (tin, tout) = (Address::repeat_byte(0xd1), Address::repeat_byte(0xd2));
         let (steady, sometimes, candidate) = (
             Address::repeat_byte(0xd3),
@@ -1852,12 +1874,12 @@ mod tests {
                 marginal_out: U256::from(bps),
                 marginal_bps_e4: U256::from(bps),
             }];
-            store_coverage((7, tin, tout, band), print, &value, U256::from(1u64), LEASE);
+            cache.store_coverage((7, tin, tout, band), print, &value, U256::from(1u64), LEASE);
         };
         band(20, vec![steady, sometimes], 90_000, 5_000);
         band(21, vec![steady], 30_000, 8_500);
 
-        let evidence = certified_admission(7, tin, tout);
+        let evidence = cache.certified_admission(7, tin, tout);
 
         assert_eq!(evidence.idle, vec![steady], "idle intersects across bands");
         assert_eq!(
@@ -1872,7 +1894,7 @@ mod tests {
         );
         assert_eq!(evidence.bands, 2, "both bands are charged for");
         assert!(
-            certified_admission(8, tin, tout).idle.is_empty(),
+            cache.certified_admission(8, tin, tout).idle.is_empty(),
             "another chain"
         );
     }
@@ -1887,6 +1909,7 @@ mod tests {
     /// does not still gets nowhere.
     #[test]
     fn the_band_that_pays_carries_the_swap_and_a_weak_one_still_cannot() {
+        let cache = CoverageCache::default();
         let (tin, tout) = (Address::repeat_byte(0xf1), Address::repeat_byte(0xf2));
         let (held, idle, usdc, weak) = (
             Address::repeat_byte(0xf3),
@@ -1912,14 +1935,14 @@ mod tests {
                     marginal_bps_e4: U256::from(weak_bps),
                 },
             ];
-            store_coverage((9, tin, tout, band), print, &value, U256::from(1u64), LEASE);
+            cache.store_coverage((9, tin, tout, band), print, &value, U256::from(1u64), LEASE);
         };
         // §25's three retained bands, at its measured gaps.
         band(7, 2_153, 1_000, 377); // 100:   0.2153 bp, gap 0.0377
         band(10, 15_276, 2_000, 3_166); // 1,000: 1.5276 bp, gap 0.3166
         band(12, 33_269, 3_000, 78); // 3,000: 3.3269 bp, gap 0.0078
 
-        let evidence = certified_admission(9, tin, tout);
+        let evidence = cache.certified_admission(9, tin, tout);
         assert_eq!(evidence.bands, 3);
         assert_eq!(evidence.gains.get(&usdc), Some(&U256::from(33_269u64)));
         assert_eq!(evidence.loss_bound_bps_e4, U256::from(3_166u64));
@@ -1961,7 +1984,11 @@ mod tests {
     }
 
     /// One verdict, aged to where each reader actually meets it.
-    fn aged_verdict(chain: u64, age: Duration) -> (Address, Address, Address, B256, CoverageKey) {
+    fn aged_verdict(
+        cache: &CoverageCache,
+        chain: u64,
+        age: Duration,
+    ) -> (Address, Address, Address, B256, CoverageKey) {
         let (tin, tout) = (Address::repeat_byte(0xe1), Address::repeat_byte(0xe2));
         let connector = Address::repeat_byte(0xe3);
         let print = B256::repeat_byte(0xe4);
@@ -1973,7 +2000,7 @@ mod tests {
             marginal_out: U256::from(1u64),
             marginal_bps_e4: U256::from(309_000u64), // 30.9 bp, §16's richest
         }];
-        store_coverage_aged(key, print, &value, U256::from(1u64), LEASE, age);
+        cache.store_coverage_aged(key, print, &value, U256::from(1u64), LEASE, age);
         (tin, tout, connector, print, key)
     }
 
@@ -1989,9 +2016,10 @@ mod tests {
     /// sub-second window, and silently admits nothing the rest of the time.
     #[test]
     fn admission_reads_a_verdict_measured_one_lease_ago() {
-        let (tin, tout, connector, _, _) = aged_verdict(9, LEASE + Duration::from_secs(30));
+        let cache = CoverageCache::default();
+        let (tin, tout, connector, _, _) = aged_verdict(&cache, 9, LEASE + Duration::from_secs(30));
 
-        let merged = certified_admission(9, tin, tout).gains;
+        let merged = cache.certified_admission(9, tin, tout).gains;
 
         assert_eq!(
             merged.get(&connector),
@@ -2005,18 +2033,20 @@ mod tests {
     /// to make, and admission reading further back must not relax it.
     #[test]
     fn reporting_refuses_a_verdict_past_its_ttl() {
-        let (_, _, _, print, key) = aged_verdict(10, LEASE + Duration::from_secs(30));
+        let cache = CoverageCache::default();
+        let (_, _, _, print, key) = aged_verdict(&cache, 10, LEASE + Duration::from_secs(30));
 
-        assert!(cached_coverage(key, print).is_none());
+        assert!(cache.cached_coverage(key, print).is_none());
     }
 
     /// Both horizons end. A verdict two leases old describes a topology two
     /// rotations gone, and admission falls back to the ranking's order.
     #[test]
     fn admission_drops_a_verdict_past_two_leases() {
-        let (tin, tout, _, _, _) = aged_verdict(11, LEASE * 2 + Duration::from_secs(30));
+        let cache = CoverageCache::default();
+        let (tin, tout, _, _, _) = aged_verdict(&cache, 11, LEASE * 2 + Duration::from_secs(30));
 
-        assert!(certified_admission(11, tin, tout).gains.is_empty());
+        assert!(cache.certified_admission(11, tin, tout).gains.is_empty());
     }
 
     /// Admission is called with the pair the engine canonicalized, while the
@@ -2027,9 +2057,10 @@ mod tests {
     /// against address order — silently, and on half of them.
     #[test]
     fn admission_reads_a_verdict_filed_in_the_other_direction() {
-        let (tin, tout, connector, _, _) = aged_verdict(12, Duration::from_secs(1));
+        let cache = CoverageCache::default();
+        let (tin, tout, connector, _, _) = aged_verdict(&cache, 12, Duration::from_secs(1));
 
-        let merged = certified_admission(12, tout, tin).gains;
+        let merged = cache.certified_admission(12, tout, tin).gains;
 
         assert_eq!(merged.get(&connector), Some(&U256::from(309_000u64)));
     }
@@ -2048,10 +2079,8 @@ mod tests {
     /// field that stays true across the band.
     #[test]
     fn a_reused_verdict_keeps_its_ratio_while_its_wei_amounts_go_stale() {
-        // A connector distinct from every other cache test's: the cache is
-        // process-global and keyed by fingerprint, and the fixture's fingerprint
-        // moves with this address. `first.age == 0` below is what catches a
-        // collision if one is ever introduced.
+        // This test's own cache: the first quote measures, the second reuses.
+        let cache = CoverageCache::default();
         let connector = Address::repeat_byte(0x78);
         // Rate-neutral and deep, so the connector's edge is the direct pool's
         // slippage minus one extra LP fee — percent, not the fixture default's
@@ -2075,27 +2104,28 @@ mod tests {
         );
 
         let serve = |amount_in| {
-            coverage(
-                &snap,
-                &universe,
-                &screening,
-                &served_plan(&snap, &universe, amount_in),
-                U256::from(10_000u64),
-                served_output(&snap, &universe, amount_in),
-                amount_in,
-                CHUNKS,
-                MIN_SHARE,
-                &SolverBudget::unlimited(),
-            )
-            .expect("coverage ran without error")
-            .expect("a screened universe is measurable")
+            cache
+                .coverage(
+                    &snap,
+                    &universe,
+                    &screening,
+                    &served_plan(&snap, &universe, amount_in),
+                    U256::from(10_000u64),
+                    served_output(&snap, &universe, amount_in),
+                    amount_in,
+                    CHUNKS,
+                    MIN_SHARE,
+                    &SolverBudget::unlimited(),
+                )
+                .expect("coverage ran without error")
+                .expect("a screened universe is measurable")
         };
 
         let measured = serve(measured_at);
         assert_eq!(
             measured.age,
             Duration::ZERO,
-            "another test's verdict was served — cache keys collided"
+            "the first quote must measure, not reuse"
         );
         assert!(measured.value.gain_bps_e4 > U256::ZERO);
 

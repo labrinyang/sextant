@@ -1367,6 +1367,7 @@ async fn bsc_snapshot_without_an_indexer_fails_before_rpc_and_redacts_its_url() 
         crate::chain::BSC_USDT,
         None,
         None,
+        None,
     )
     .await
     .err()
@@ -2254,6 +2255,7 @@ async fn a_profile_whose_factories_name_its_pools_refuses_an_indexer() {
         Address::repeat_byte(0x22),
         None,
         None,
+        None,
     )
     .await;
     let Err(error) = outcome else {
@@ -2272,10 +2274,11 @@ async fn snapshot_at_for_a_profile_without_discovery_errs_as_the_dispatcher_does
     let public = snapshot_at_for(&disabled, &rpc, None, token_a, token_b, None)
         .await
         .expect_err("a profile without discovery must refuse the snapshot");
-    let dispatched = snapshot_at_observed_for(&disabled, &rpc, None, token_a, token_b, None, None)
-        .await
-        .err()
-        .expect("the dispatcher refuses a profile without discovery");
+    let dispatched =
+        snapshot_at_observed_for(&disabled, &rpc, None, token_a, token_b, None, None, None)
+            .await
+            .err()
+            .expect("the dispatcher refuses a profile without discovery");
     assert_eq!(format!("{public:#}"), format!("{dispatched:#}"));
     assert_eq!(
         public.to_string(),

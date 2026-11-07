@@ -255,6 +255,7 @@ async fn quote_swap_inner(
             (a, b),
             amount_in,
             native_planning_enabled,
+            engine.coverage_cache(),
             &budget,
         )
     };

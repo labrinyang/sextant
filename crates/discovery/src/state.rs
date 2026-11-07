@@ -6,6 +6,7 @@
 
 use crate::catalog::CandidateSource;
 use crate::chain::{ChainProfile, DiscoveryProfile};
+use crate::counterfactual::CoverageCache;
 use crate::indexer::IndexerClient;
 use crate::pools::{V2Protocol, V3Protocol};
 use crate::rpc::Rpc;
@@ -141,7 +142,11 @@ enum Probe {
 /// Profile-bound entrypoint used by the resident engine and, through
 /// `snapshot_at_for`, by tools. Every caller passes the profile of the chain it
 /// reads, so an enabled endpoint can never fall through to the
-/// Robinhood-specific QuoteLens/address graph on another chain.
+/// Robinhood-specific QuoteLens/address graph on another chain. `coverage` is
+/// the engine's cache of the verdicts its quotes measured, which connector
+/// admission reads when it builds the pair's universe; None admits on the
+/// ranking alone.
+#[allow(clippy::too_many_arguments)] // the pair, its pin, and what the engine already knows
 pub async fn snapshot_at_observed_for(
     profile: &ChainProfile,
     rpc: &Rpc,
@@ -150,6 +155,7 @@ pub async fn snapshot_at_observed_for(
     token_b: Address,
     pin_block: Option<u64>,
     listed: Option<&dyn ListedPaths>,
+    coverage: Option<&CoverageCache>,
 ) -> anyhow::Result<ObservedSnapshot> {
     match profile.discovery {
         DiscoveryProfile::Robinhood => {
@@ -170,7 +176,7 @@ pub async fn snapshot_at_observed_for(
                 }
             };
             snapshot_at_observed_indexed(
-                profile, discovery, rpc, namer, token_a, token_b, pin_block, listed,
+                profile, discovery, rpc, namer, token_a, token_b, pin_block, listed, coverage,
             )
             .await
         }
@@ -184,7 +190,8 @@ pub async fn snapshot_at_observed_for(
 
 /// Snapshot of one token pair on `profile`'s chain, pinned to `pin_block`
 /// (None = the current head). This is the public entry for tools: it runs
-/// `snapshot_at_observed_for` without resident listed paths. `indexer` is the
+/// `snapshot_at_observed_for` without resident listed paths or a coverage
+/// cache. `indexer` is the
 /// client `server::configured_indexer` builds, None where the profile needs none.
 pub async fn snapshot_at_for(
     profile: &ChainProfile,
@@ -194,11 +201,11 @@ pub async fn snapshot_at_for(
     token_b: Address,
     pin_block: Option<u64>,
 ) -> anyhow::Result<Snapshot> {
-    Ok(
-        snapshot_at_observed_for(profile, rpc, indexer, token_a, token_b, pin_block, None)
-            .await?
-            .snapshot,
+    Ok(snapshot_at_observed_for(
+        profile, rpc, indexer, token_a, token_b, pin_block, None, None,
     )
+    .await?
+    .snapshot)
 }
 
 #[cfg(test)]

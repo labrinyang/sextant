@@ -14,6 +14,7 @@ use super::settings::{TOPO_TTL, bitmap_words};
 use crate::abi::IUniV3Factory;
 use crate::catalog::{CatalogVenue, IndexedEvmDiscovery};
 use crate::chain::ChainProfile;
+use crate::counterfactual::CoverageCache;
 use crate::indexer::IndexerClient;
 use crate::pools::{V2Pool, V3Pool};
 use crate::rpc::{CanonicalBlock, Rpc, sanitized_error};
@@ -111,7 +112,7 @@ pub trait ListedPaths: Send + Sync {
     fn listed_paths(&self, statics: &[Address], a: Address, b: Address) -> Vec<Vec<Address>>;
 }
 
-#[allow(clippy::too_many_arguments)] // the pair, its pin, and where its listed skeletons come from
+#[allow(clippy::too_many_arguments)] // the pair, its pin, and what the engine already knows
 pub(super) async fn snapshot_at_observed_indexed(
     profile: &ChainProfile,
     discovery: &IndexedEvmDiscovery,
@@ -121,6 +122,7 @@ pub(super) async fn snapshot_at_observed_indexed(
     token_b: Address,
     pin_block: Option<u64>,
     listed: Option<&dyn ListedPaths>,
+    coverage: Option<&CoverageCache>,
 ) -> anyhow::Result<ObservedSnapshot> {
     let (a, b) = (profile.erc20_of(token_a), profile.erc20_of(token_b));
     ensure!(a != b, "identical tokens");
@@ -149,7 +151,7 @@ pub(super) async fn snapshot_at_observed_indexed(
             let (v3, v2, screen_v3, screen_v2, universe, topology_fences) = match namer {
                 PoolNamer::Indexer(indexer) => {
                     let proposed = indexed_route_universe(
-                        profile, discovery, indexer, a, b, pin_block, &listed,
+                        profile, discovery, indexer, a, b, pin_block, &listed, coverage,
                     )
                     .await?;
                     let (v3, v2, universe, topology_fences) = discover_indexed(

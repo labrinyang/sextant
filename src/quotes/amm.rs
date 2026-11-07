@@ -4,6 +4,7 @@ use crate::budget::SolverBudget;
 use crate::certificate;
 use crate::certificate::{Certificate, certify_in_universe_with_budget};
 use crate::chain::ChainProfile;
+use crate::counterfactual::CoverageCache;
 use crate::engine::Stamped;
 use crate::route::{ALLOC_CHUNKS, MIN_SHARE_BPS, Plan, PreparedRoutes};
 use crate::rpc::RpcUnavailable;
@@ -208,14 +209,16 @@ pub(super) fn fresh_amm_snapshot(stamped: &Stamped) -> anyhow::Result<&Snapshot>
 
 /// The AMM stage of a quote: solve the pair, widen a resident graph, certify
 /// the plan that ships, solve the 1% probe for the fair reference, and measure
-/// coverage. CPU work only; the caller decides whether it runs in place or on
-/// a blocking thread.
+/// coverage, reading and filing verdicts in the engine's `coverage_cache`. CPU
+/// work only; the caller decides whether it runs in place or on a blocking
+/// thread.
 pub(super) fn evaluate_amm(
     stamped: &Stamped,
     profile: &'static ChainProfile,
     (a, b): (Address, Address),
     amount_in: U256,
     native_planning_enabled: bool,
+    coverage_cache: &CoverageCache,
     budget: &SolverBudget,
 ) -> anyhow::Result<AmmEvaluation> {
     budget.checkpoint("quote solve")?;
@@ -321,7 +324,7 @@ pub(super) fn evaluate_amm(
         (plan.as_ref(), certified_gap_bps_e4)
         && !screening.is_empty()
     {
-        match crate::counterfactual::coverage(
+        match coverage_cache.coverage(
             snap,
             &universe,
             screening,
