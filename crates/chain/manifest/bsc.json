@@ -1,0 +1,143 @@
+{
+  "key": "bsc",
+  "name": "BNB Smart Chain",
+  "chainId": 56,
+  "publicRpc": "https://bsc-dataseed.bnbchain.org",
+  "wrappedNative": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+  "stable": {
+    "address": "0x55d398326f99059fF775485246999027B3197955",
+    "decimals": 18
+  },
+  "connectors": [
+    "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    "0x55d398326f99059fF775485246999027B3197955",
+    "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d"
+  ],
+  "routing": {
+    "topologyPairBudget": 24,
+    "dynamicConnectorCap": 8,
+    "screenConnectorCap": 6,
+    "dynamicConnectorAllowlist": [
+      "0x55d398326f99059fF775485246999027B3197955",
+      "0x0555E30da8f98308EdB960aa94C0Db47230d2B9c",
+      "0xF8A0BF9cF54Bb92F17374d9e9A321E6a111a51bD",
+      "0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c",
+      "0x8d0D000Ee44948FC98c9B98A4FA4921476f08B0d",
+      "0xBf5140A22578168FD562DCcF235E5D43A02ce9B1",
+      "0x000Ae314E2A2172a039B26378814C252734f556A",
+      "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
+      "0xcE24439F2D9C6a2289F741120FE202248B666666",
+      "0x25d887Ce7a35172C62FeBFD67a1856F20FaEbB00",
+      "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+      "0x2170Ed0880ac9A755fd29B2688956BD959F933F8",
+      "0x011EBe7d75E2C9D1E0bD0be0bEf5C36f0A90075F",
+      "0xa2B726B1145A4773F68593CF171187d8EBe4d495",
+      "0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82",
+      "0xc5f0f7b66764F6ec8C8Dff7BA683102295E16409",
+      "0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE",
+      "0xe9e7CEA3DedcA5984780Bafc599bD69ADd087D56",
+      "0xbA2aE424d960c26247Dd6c32edC70B295c744C43",
+      "0x4B0F1812e5Df2A09796481Ff14017e6005508003",
+      "0x21cAef8A43163Eea865baeE23b9C2E327696A3bf",
+      "0x7Ddc52c4De30e94Be3A6A0A2b259b2850f421989",
+      "0x1Ba42e5193dfA8B03D15dd1B86a3113bbBEF8Eeb",
+      "0x3EE2200Efb3400fAbB9AacF31297cBdD1d435D47",
+      "0x5b73A93b4E5e4f1FD27D8b3F8C97D69908b5E284",
+      "0x570A5D26f7765Ecb712C0924E4De545B89fD43dF",
+      "0x23AE4fd8E7844cdBc97775496eBd0E8248656028"
+    ]
+  },
+  "discovery": {
+    "kind": "indexer",
+    "schemaVersion": 2,
+    "readiness": "requestedVenues",
+    "venues": [
+      {
+        "family": "v2",
+        "id": "univ2",
+        "factory": "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
+        "feePpm": 3000,
+        "quote": true
+      },
+      {
+        "family": "v3",
+        "id": "univ3",
+        "factory": "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7",
+        "verifyPoolSpacing": false,
+        "feeTiers": [],
+        "quote": true
+      },
+      {
+        "family": "v2",
+        "id": "pancakev2",
+        "factory": "0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73",
+        "feePpm": 2500,
+        "quote": true
+      },
+      {
+        "family": "v3",
+        "id": "pancakev3",
+        "factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+        "verifyPoolSpacing": true,
+        "feeTiers": [],
+        "quote": true
+      },
+      {
+        "family": "v4",
+        "id": "univ4",
+        "poolManager": "0x28e2Ea090877bF75740558f6BFB36A5ffeE9e9dF",
+        "poolsSlot": 6,
+        "quote": true
+      }
+    ]
+  },
+  "settler": {
+    "registry": "0x00000000000004533Fe15556B1E086BB1A72cEae",
+    "registryTokenId": 2,
+    "allowanceHolder": "0x0000000000001fF3684f28c67538d4D072C22734",
+    "allowanceHolderRuntimeHash": "0x99f5e8edaceacfdd183eb5f1da8a7757b322495b80cf7928db289a1b1a09f799",
+    "runtime": {
+      "exact": "0x5bea8bbcbec50c7c13a617ae5b256708d1da335f34074327e4a0a9b43204a16d"
+    },
+    "encoding": "ppmVipPathFromPermit",
+    "v3Forks": [
+      {
+        "venue": "univ3",
+        "forkId": 0,
+        "deployer": "0xdB1d10011AD0Ff90774D0C6Bb92e5C5c8b4461F7",
+        "initHash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+      },
+      {
+        "venue": "pancakev3",
+        "forkId": 1,
+        "deployer": "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
+        "initHash": "0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2"
+      }
+    ],
+    "univ4PoolManager": "0x28e2Ea090877bF75740558f6BFB36A5ffeE9e9dF",
+    "univ4ForkId": 0,
+    "ekuboV3Runtimes": []
+  },
+  "nativeRfq": {
+    "apiChain": "bsc",
+    "routerVersion": 6,
+    "contractRevision": 60000,
+    "router": "0x1fDED89D98CBeADd96a109D28689c2638025dad3",
+    "routerRuntimeHash": "0xf2fb7cc79148bb2e09e56c51741a8434a9dd55607b6d5ee1ed4abaf65dcebc42",
+    "pool": "0x8Ac1009D5f13660CE7089901E51459142ad50793",
+    "poolRuntimeHash": "0x6e830c9f13786c7f3ce54ab217d7fb1f39350a4f3585eef2d3f2ee18078df2b2",
+    "creditVault": "0xBA8dB0CAf781cAc69b6acf6C848aC148264Cc05d",
+    "creditVaultRuntimeHash": "0xb277493dfed82157221cc9dfe993119f77590eb00087970580925aafc1c92d20",
+    "tradeSelector": "0x7083527c",
+    "domainFields": 15,
+    "domainName": "Native RFQ Pool",
+    "domainVersion": "1",
+    "domainChainId": 56,
+    "stockTokens": [
+      "0x2494b603319d4D9F9715c9f4496d9E0364B59d93",
+      "0xA9eE28C80f960B889dFbd1902055218cBa016F75",
+      "0x091FC7778e6932d4009B087B191D1EE3bac5729A",
+      "0x0cdE6936d305d5B34667fC46425E852efd73559a"
+    ]
+  }
+}

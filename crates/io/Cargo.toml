@@ -1,0 +1,24 @@
+[package]
+name = "sextant-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sextant's chain I/O: the RPC client, its dispatch admission and work budgets."
+publish.workspace = true
+
+[dependencies]
+sextant-budget = { path = "../budget" }
+alloy = { version = "2.2.0", default-features = false, features = ["providers", "transport-http", "rpc-types", "reqwest-rustls-tls", "signer-local"] }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures-util = "0.3"
+reqwest.workspace = true
+tokio = { version = "1.53.0", features = ["full"] }
+
+[dev-dependencies]
+axum = "0.8.9"
+tokio = { version = "1.53.0", features = ["full", "test-util"] }

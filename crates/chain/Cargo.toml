@@ -1,0 +1,20 @@
+[package]
+name = "sextant-chain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sextant's chain profiles, built from embedded manifests."
+publish.workspace = true
+
+[features]
+# The test-only fixture profile, for dependents' tests. Never enable it in a
+# production build.
+fixtures = []
+
+[dependencies]
+sextant-amm = { path = "../amm" }
+alloy-primitives.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true

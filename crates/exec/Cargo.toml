@@ -1,0 +1,33 @@
+[package]
+name = "sextant-exec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sextant's execution: plans into 0x Settler transactions, and their simulation."
+publish.workspace = true
+
+[features]
+# The simulation test chain, for dependents' tests.
+testing = ["dep:axum"]
+
+[dependencies]
+axum = { version = "0.8.9", optional = true }
+sextant-amm = { path = "../amm" }
+sextant-chain = { path = "../chain" }
+sextant-io = { path = "../io" }
+sextant-rfq = { path = "../rfq" }
+alloy = { version = "2.2.0", default-features = false, features = ["providers", "transport-http", "rpc-types", "reqwest-rustls-tls", "signer-local"] }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.53.0", features = ["full"] }
+
+[dev-dependencies]
+sextant-chain = { path = "../chain", features = ["fixtures"] }
+sextant-route = { path = "../route", features = ["testing"] }
+sextant-rfq = { path = "../rfq", features = ["testing"] }
+axum = "0.8.9"
+tokio = { version = "1.53.0", features = ["full", "test-util"] }

@@ -1,0 +1,25 @@
+# One service per chain: each runs the same image with its own env file, whose
+# SOLVER_CHAIN names the chain. Start one with `docker compose --profile bsc up`,
+# and likewise with --profile ethereum or --profile robinhood.
+x-sextant: &sextant
+  image: ${SEXTANT_IMAGE:-sextant:latest}
+  build: .
+  restart: unless-stopped
+  mem_limit: 256m
+
+services:
+  sextant-bsc:
+    <<: *sextant
+    profiles: [bsc]
+    env_file: [${SEXTANT_BSC_ENV_FILE:-bsc.env}]
+    container_name: sextant-bsc
+  sextant-ethereum:
+    <<: *sextant
+    profiles: [ethereum]
+    env_file: [${SEXTANT_ETHEREUM_ENV_FILE:-ethereum.env}]
+    container_name: sextant-ethereum
+  sextant-robinhood:
+    <<: *sextant
+    profiles: [robinhood]
+    env_file: [${SEXTANT_ROBINHOOD_ENV_FILE:-robinhood.env}]
+    container_name: sextant-robinhood

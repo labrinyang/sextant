@@ -1,0 +1,98 @@
+{
+  "key": "ethereum",
+  "name": "Ethereum",
+  "chainId": 1,
+  "publicRpc": "https://ethereum-rpc.publicnode.com",
+  "wrappedNative": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  "stable": {
+    "address": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "decimals": 6
+  },
+  "connectors": [
+    "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+  ],
+  "routing": {
+    "topologyPairBudget": 16,
+    "dynamicConnectorCap": 3,
+    "screenConnectorCap": 6,
+    "dynamicConnectorAllowlist": []
+  },
+  "discovery": {
+    "kind": "factories",
+    "venues": [
+      {
+        "family": "v2",
+        "id": "univ2",
+        "factory": "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+        "feePpm": 3000,
+        "quote": true
+      },
+      {
+        "family": "v2",
+        "id": "sushiv2",
+        "factory": "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac",
+        "feePpm": 3000,
+        "quote": true
+      },
+      {
+        "family": "v3",
+        "id": "univ3",
+        "factory": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        "verifyPoolSpacing": false,
+        "feeTiers": [100, 500, 3000, 10000],
+        "quote": true
+      },
+      {
+        "family": "v3",
+        "id": "sushiv3",
+        "factory": "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F",
+        "verifyPoolSpacing": false,
+        "feeTiers": [100, 500, 3000, 10000],
+        "quote": true
+      },
+      {
+        "family": "v3",
+        "id": "pancakev3",
+        "factory": "0x0BFbCF9fa4f9C56B0F40a671Ad40E0805A091865",
+        "verifyPoolSpacing": true,
+        "feeTiers": [100, 500, 2500, 10000],
+        "quote": true
+      }
+    ]
+  },
+  "settler": {
+    "registry": "0x00000000000004533Fe15556B1E086BB1A72cEae",
+    "registryTokenId": 2,
+    "allowanceHolder": "0x0000000000001fF3684f28c67538d4D072C22734",
+    "allowanceHolderRuntimeHash": "0x99f5e8edaceacfdd183eb5f1da8a7757b322495b80cf7928db289a1b1a09f799",
+    "runtime": {
+      "exact": "0xffdce6016c0efe4a2503f44f26cefdca5b0a563455b4712081078d933623ff34"
+    },
+    "encoding": "ppmVipPathFromPermit",
+    "v3Forks": [
+      {
+        "venue": "univ3",
+        "forkId": 0,
+        "deployer": "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+        "initHash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+      },
+      {
+        "venue": "pancakev3",
+        "forkId": 1,
+        "deployer": "0x41ff9AA7e16B8B1a8a8dc4f0eFacd93D02d071c9",
+        "initHash": "0x6ce8eb472fa82df5469c6ab6d485f17c3ad13c8cd7af59b3d4a8026c5ce0f7e2"
+      },
+      {
+        "venue": "sushiv3",
+        "forkId": 2,
+        "deployer": "0xbACEB8eC6b9355Dfc0269C18bac9d6E2Bdc29C4F",
+        "initHash": "0xe34f199b19b2b4f47f68442619d555527d244f78a3297ea89325f843f87b8b54"
+      }
+    ],
+    "univ4PoolManager": "0x000000000004444c5dc75cB358380D2e3dE08A90",
+    "univ4ForkId": 0,
+    "ekuboV3Runtimes": []
+  }
+}

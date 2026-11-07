@@ -1,0 +1,22 @@
+[package]
+name = "sextant-route"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Sextant's router and certificate over a block snapshot: no I/O."
+publish.workspace = true
+
+[features]
+# Whole-graph certificate helpers for dependents' tests.
+testing = []
+
+[dependencies]
+sextant-amm = { path = "../amm" }
+sextant-chain = { path = "../chain" }
+sextant-budget = { path = "../budget" }
+alloy-primitives.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+sextant-chain = { path = "../chain", features = ["fixtures"] }

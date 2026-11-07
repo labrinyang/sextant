@@ -1,0 +1,128 @@
+[package]
+name = "sextant"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+# Examples are registered explicitly so operational checks remain intentional.
+autoexamples = false
+
+[lib]
+name = "sextant"
+
+[[bin]]
+name = "sextant"
+path = "src/main.rs"
+
+[[example]]
+name = "route_profile"
+path = "examples/route_profile.rs"
+
+[[example]]
+name = "resident_watch"
+path = "examples/resident_watch.rs"
+
+[[example]]
+name = "e2e"
+path = "examples/e2e.rs"
+
+[[example]]
+name = "native_bsc_smoke"
+path = "examples/native_bsc_smoke.rs"
+
+[workspace]
+members = ["crates/*"]
+# A plain `cargo test` or `cargo clippy` at the root covers every package.
+default-members = [
+    ".",
+    "crates/amm",
+    "crates/budget",
+    "crates/chain",
+    "crates/exec",
+    "crates/io",
+    "crates/observe",
+    "crates/rfq",
+    "crates/route",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.94"
+publish = false
+
+[workspace.dependencies]
+alloy-primitives = "1.6.1"
+alloy-sol-types = "1.6.1"
+anyhow = "1.0.103"
+ekubo_sdk = { version = "=3.2.0", default-features = false, features = ["std", "evm-alloy-1"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["arbitrary_precision"] }
+
+[dependencies]
+sextant-amm = { path = "crates/amm" }
+sextant-chain = { path = "crates/chain" }
+sextant-budget = { path = "crates/budget" }
+sextant-route = { path = "crates/route" }
+sextant-io = { path = "crates/io" }
+sextant-rfq = { path = "crates/rfq" }
+sextant-discovery = { path = "crates/discovery" }
+sextant-exec = { path = "crates/exec" }
+sextant-observe = { path = "crates/observe" }
+tracing = "0.1.44"
+alloy = { version = "2.2.0", default-features = false, features = ["providers", "transport-http", "rpc-types", "reqwest-rustls-tls", "signer-local"] }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+anyhow.workspace = true
+arc-swap = "1.7.1"
+axum = "0.8.9"
+futures-util = "0.3"
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.53.0", features = ["full"] }
+
+[dev-dependencies]
+ekubo_sdk.workspace = true
+sextant-exec = { path = "crates/exec", features = ["testing"] }
+sextant-rfq = { path = "crates/rfq", features = ["testing"] }
+sextant-route = { path = "crates/route", features = ["testing"] }
+sextant-chain = { path = "crates/chain", features = ["fixtures"] }
+# Paused clocks for timer tests.
+tokio = { version = "1.53.0", features = ["full", "test-util"] }
+
+[[example]]
+name = "bsc_execution_smoke"
+path = "examples/bsc_execution_smoke.rs"
+
+[[example]]
+name = "certificate_explain"
+path = "examples/certificate_explain.rs"
+
+[[example]]
+name = "certificate_ladder"
+path = "examples/certificate_ladder.rs"
+
+[[example]]
+name = "compare0x"
+path = "examples/compare0x.rs"
+
+[[example]]
+name = "diag0x"
+path = "examples/diag0x.rs"
+
+[[example]]
+name = "shadow_case"
+path = "examples/shadow_case.rs"
+
+[[example]]
+name = "smoke"
+path = "examples/smoke.rs"
+
+[[example]]
+name = "warmup_tx"
+path = "examples/warmup_tx.rs"

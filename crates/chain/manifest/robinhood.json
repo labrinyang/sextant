@@ -1,0 +1,42 @@
+{
+  "key": "robinhood",
+  "name": "Robinhood Chain",
+  "chainId": 4663,
+  "publicRpc": "https://rpc.mainnet.chain.robinhood.com",
+  "wrappedNative": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+  "stable": {
+    "address": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "decimals": 6
+  },
+  "connectors": [
+    "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+    "0xc6911796042b15d7Fa4F6CDe69e245DdCd3d9c31"
+  ],
+  "routing": {
+    "topologyPairBudget": 16,
+    "dynamicConnectorCap": 3,
+    "screenConnectorCap": 6,
+    "dynamicConnectorAllowlist": []
+  },
+  "discovery": {
+    "kind": "robinhood"
+  },
+  "settler": {
+    "registry": "0x00000000000004533Fe15556B1E086BB1A72cEae",
+    "registryTokenId": 2,
+    "allowanceHolder": "0x0000000000001fF3684f28c67538d4D072C22734",
+    "allowanceHolderRuntimeHash": "0x99f5e8edaceacfdd183eb5f1da8a7757b322495b80cf7928db289a1b1a09f799",
+    "runtime": {
+      "exact": "0xed95405613cc92e911802b3a8b6bb1adcb29590a358c07d0249a4a49c472d756"
+    },
+    "encoding": "ppmVipPathFromPermit",
+    "v3Forks": [],
+    "univ4PoolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+    "univ4ForkId": 0,
+    "ekuboV3Runtimes": [
+      "0xb6c0bf3b83bc9ae4f6ed65a4f5f6c188eb3e4258d8d3b3705dff4ac02ed4a966",
+      "0xed95405613cc92e911802b3a8b6bb1adcb29590a358c07d0249a4a49c472d756"
+    ]
+  }
+}

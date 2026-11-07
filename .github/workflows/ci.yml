@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The workspace build unifies dev-dependency features, which can hide a
+      # warning in a member built alone. Build each member's library, and the
+      # application, without them.
+      - run: cargo clippy -p sextant-route -p sextant-io -p sextant-rfq -p sextant-exec -p sextant-budget --lib --locked -- -D warnings
+      - run: cargo clippy -p sextant --lib --bins --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo test --examples --locked
+      - run: cargo run --release --locked --example route_profile | tee route_profile.out
+      - run: grep -q 'amount_out=994246489566748118282' route_profile.out
+      - run: grep -q 'consistent=true' route_profile.out

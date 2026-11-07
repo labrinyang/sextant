@@ -1,0 +1,32 @@
+[package]
+name = "sextant-rfq"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Native RFQ for Sextant: firm quotes, validation, beneficiary authorization and the quota coordinator."
+publish.workspace = true
+
+[features]
+# Constructors for dependents' tests.
+testing = ["sextant-chain/fixtures"]
+
+[dependencies]
+sextant-chain = { path = "../chain" }
+sextant-budget = { path = "../budget" }
+sextant-io = { path = "../io" }
+alloy = { version = "2.2.0", default-features = false, features = ["providers", "transport-http", "rpc-types", "reqwest-rustls-tls", "signer-local"] }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum = "0.8.9"
+futures-util = "0.3"
+reqwest.workspace = true
+tokio = { version = "1.53.0", features = ["full"] }
+zeroize = "1.9"
+
+[dev-dependencies]
+sextant-chain = { path = "../chain", features = ["fixtures"] }
+tokio = { version = "1.53.0", features = ["full", "test-util"] }
