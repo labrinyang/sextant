@@ -34,17 +34,7 @@ path = "examples/native_bsc_smoke.rs"
 [workspace]
 members = ["crates/*"]
 # A plain `cargo test` or `cargo clippy` at the root covers every package.
-default-members = [
-    ".",
-    "crates/amm",
-    "crates/budget",
-    "crates/chain",
-    "crates/exec",
-    "crates/io",
-    "crates/observe",
-    "crates/rfq",
-    "crates/route",
-]
+default-members = [".", "crates/*"]
 resolver = "3"
 
 [workspace.package]
