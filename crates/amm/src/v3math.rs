@@ -77,53 +77,73 @@ pub fn to_u160(x: U256) -> anyhow::Result<U256> {
 
 // ---- TickMath ----
 
-const TICK_FACTORS: [U256; 19] = [
-    uint!(0xfff97272373d413259a46990580e213a_U256),
-    uint!(0xfff2e50f5f656932ef12357cf3c7fdcc_U256),
-    uint!(0xffe5caca7e10e4e61c3624eaa0941cd0_U256),
-    uint!(0xffcb9843d60f6159c9db58835c926644_U256),
-    uint!(0xff973b41fa98c081472e6896dfb254c0_U256),
-    uint!(0xff2ea16466c96a3843ec78b326b52861_U256),
-    uint!(0xfe5dee046a99a2a811c461f1969c3053_U256),
-    uint!(0xfcbe86c7900a88aedcffc83b479aa3a4_U256),
-    uint!(0xf987a7253ac413176f2b074cf7815e54_U256),
-    uint!(0xf3392b0822b70005940c7a398e4b70f3_U256),
-    uint!(0xe7159475a2c29b7443b29c7fa6e889d9_U256),
-    uint!(0xd097f3bdfd2022b8845ad8f792aa5825_U256),
-    uint!(0xa9f746462d870fdf8a65dc1f90e061e5_U256),
-    uint!(0x70d869a156d2a1b890bb3df62baf32f7_U256),
-    uint!(0x31be135f97d08fd981231505542fcfa6_U256),
-    uint!(0x9aa508b5b7a84e1c677de54f3e99bc9_U256),
-    uint!(0x5d6af8dedb81196699c329225ee604_U256),
-    uint!(0x2216e584f5fa1ea926041bedfe98_U256),
-    uint!(0x48a170391f7dc42444e8fa2_U256),
+/// TickMath's per-bit factors, each below 2^128.
+const TICK_FACTORS: [u128; 19] = [
+    0xfff97272373d413259a46990580e213a,
+    0xfff2e50f5f656932ef12357cf3c7fdcc,
+    0xffe5caca7e10e4e61c3624eaa0941cd0,
+    0xffcb9843d60f6159c9db58835c926644,
+    0xff973b41fa98c081472e6896dfb254c0,
+    0xff2ea16466c96a3843ec78b326b52861,
+    0xfe5dee046a99a2a811c461f1969c3053,
+    0xfcbe86c7900a88aedcffc83b479aa3a4,
+    0xf987a7253ac413176f2b074cf7815e54,
+    0xf3392b0822b70005940c7a398e4b70f3,
+    0xe7159475a2c29b7443b29c7fa6e889d9,
+    0xd097f3bdfd2022b8845ad8f792aa5825,
+    0xa9f746462d870fdf8a65dc1f90e061e5,
+    0x70d869a156d2a1b890bb3df62baf32f7,
+    0x31be135f97d08fd981231505542fcfa6,
+    0x9aa508b5b7a84e1c677de54f3e99bc9,
+    0x5d6af8dedb81196699c329225ee604,
+    0x2216e584f5fa1ea926041bedfe98,
+    0x48a170391f7dc42444e8fa2,
 ];
+/// The factor of tick bit 0.
+const TICK_ODD: u128 = 0xfffcb933bd6fad37aa2d162d1a594001;
 
-/// sqrt(1.0001^tick) as Q64.96 — TickMath.getSqrtRatioAtTick.
+/// The high and low halves of the 256-bit product a·b, from four 64×64
+/// products: TickMath's whole loop is such products of sub-2^128 values.
+fn mul_wide(a: u128, b: u128) -> (u128, u128) {
+    const LOW: u128 = u64::MAX as u128;
+    let (a0, a1) = (a & LOW, a >> 64);
+    let (b0, b1) = (b & LOW, b >> 64);
+    let (p00, p01, p10, p11) = (a0 * b0, a0 * b1, a1 * b0, a1 * b1);
+    let mid = (p00 >> 64) + (p01 & LOW) + (p10 & LOW);
+    let lo = (p00 & LOW) | (mid << 64);
+    let hi = p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64);
+    (hi, lo)
+}
+
+/// sqrt(1.0001^tick) as Q64.96 — TickMath.getSqrtRatioAtTick. Each step of
+/// the Solidity loop is `(ratio * factor) >> 128` with both below 2^128: the
+/// high half of a 128×128 product, so the loop runs on `u128`. The ratio
+/// starts at 2^128, which `u128` cannot hold, only until the first factor it
+/// is multiplied by, which it then equals; tick 0 is Q96 exactly.
 pub fn sqrt_ratio_at_tick(tick: i32) -> anyhow::Result<U256> {
     let at = tick.unsigned_abs();
     ensure!(at <= MAX_TICK as u32, "tick {tick} out of range");
-    let mut ratio = if at & 1 != 0 {
-        uint!(0xfffcb933bd6fad37aa2d162d1a594001_U256)
-    } else {
-        U256::ONE << 128usize
-    };
-    for (i, f) in TICK_FACTORS.iter().enumerate() {
+    // `None` stands for 2^128.
+    let mut ratio = (at & 1 != 0).then_some(TICK_ODD);
+    for (i, &factor) in TICK_FACTORS.iter().enumerate() {
         if at & (1 << (i + 1)) != 0 {
-            // ratio stays < 2^128 once multiplied by sub-2^128 factors: the
-            // 256-bit product cannot overflow (same argument as the Solidity).
-            ratio = (ratio * f) >> 128usize;
+            ratio = Some(match ratio {
+                Some(ratio) => mul_wide(ratio, factor).0,
+                None => factor,
+            });
         }
     }
-    if tick > 0 {
-        ratio = U256::MAX / ratio;
-    }
-    let round = if (ratio & ((U256::ONE << 32usize) - U256::ONE)).is_zero() {
-        U256::ZERO
-    } else {
-        U256::ONE
+    let Some(ratio) = ratio else {
+        return Ok(Q96);
     };
-    Ok((ratio >> 32usize) + round)
+    if tick > 0 {
+        let ratio = U256::MAX / U256::from(ratio);
+        let round = !(ratio & U256::from(u32::MAX)).is_zero();
+        Ok((ratio >> 32usize) + U256::from(round))
+    } else {
+        let round = ratio & u128::from(u32::MAX) != 0;
+        Ok(U256::from((ratio >> 32) + u128::from(round)))
+    }
 }
 
 /// `tick_at_sqrt`'s only failure: a price outside the representable range.
@@ -146,17 +166,24 @@ pub fn tick_at_sqrt(s: U256) -> anyhow::Result<i32> {
     // one-tick ambiguity.
     let ratio = s << 32usize;
     let msb = ratio.log2();
-    let mut r = if msb >= 128 {
+    let r = if msb >= 128 {
         ratio >> (msb - 127)
     } else {
         ratio << (127 - msb)
     };
+    // Each Solidity step is `r = r² >> 127`, then a halving when that
+    // reached 2^128. With r² = hi·2^128 + lo the step is 2·hi + (lo >> 127),
+    // which reaches 2^128 exactly when hi does 2^127, and halves to hi: the
+    // loop runs on `u128`.
+    let mut r = u128::try_from(r).expect("normalized below 2^128");
     let mut log_2 = ((msb as i128) - 128) << 64;
     for bit in (50..=63).rev() {
-        r = (r * r) >> 127usize;
-        if r >> 128usize != U256::ZERO {
+        let (hi, lo) = mul_wide(r, r);
+        if hi >> 127 != 0 {
             log_2 |= 1i128 << bit;
-            r >>= 1usize;
+            r = hi;
+        } else {
+            r = (hi << 1) | (lo >> 127);
         }
     }
 
@@ -191,8 +218,11 @@ fn next_sqrt_from_amount0_up(
     }
     let numerator1 = l << 96usize;
     if add {
-        let product = amount.wrapping_mul(sqrt_p); // wrapping, like unchecked Solidity
-        if product / amount == sqrt_p {
+        // Solidity tests `product / amount == sqrtPX96`, which holds exactly
+        // when the product did not wrap (amount is nonzero here): the flag
+        // gives the same answer without a 256-bit division.
+        let (product, wrapped) = amount.overflowing_mul(sqrt_p);
+        if !wrapped {
             let denominator = numerator1.wrapping_add(product); // wrapping
             if denominator >= numerator1 {
                 return muldiv_up(numerator1, sqrt_p, denominator);
@@ -259,6 +289,18 @@ pub fn amount0_delta(sqrt_a: U256, sqrt_b: U256, l: U256, round_up: bool) -> any
     ensure!(sqrt_a > U256::ZERO, "zero sqrt price");
     let numerator1 = l << 96usize;
     let numerator2 = sqrt_b - sqrt_a;
+    // Solidity divides twice, by √b and then by √a. For positive integers a
+    // nested floor is one floor by the product of the divisors, and so is a
+    // nested ceiling: ⌊⌊x/b⌋/a⌋ = ⌊x/(ab)⌋ and ⌈⌈x/b⌉/a⌉ = ⌈x/(ab)⌉. So when
+    // √a·√b fits 256 bits one division gives the same value. Neither form
+    // can overflow: the first quotient is below numerator1 since √b > √b−√a.
+    if let Some(denominator) = sqrt_a.checked_mul(sqrt_b) {
+        return if round_up {
+            muldiv_up(numerator1, numerator2, denominator)
+        } else {
+            muldiv(numerator1, numerator2, denominator)
+        };
+    }
     if round_up {
         div_up(muldiv_up(numerator1, numerator2, sqrt_b)?, sqrt_a)
     } else {
@@ -367,6 +409,99 @@ mod tests {
         ))
     }
 
+    // The U256 TickMath port the u128 kernels replaced, kept as the reference
+    // they are proved against.
+    const U256_TICK_FACTORS: [U256; 19] = [
+        uint!(0xfff97272373d413259a46990580e213a_U256),
+        uint!(0xfff2e50f5f656932ef12357cf3c7fdcc_U256),
+        uint!(0xffe5caca7e10e4e61c3624eaa0941cd0_U256),
+        uint!(0xffcb9843d60f6159c9db58835c926644_U256),
+        uint!(0xff973b41fa98c081472e6896dfb254c0_U256),
+        uint!(0xff2ea16466c96a3843ec78b326b52861_U256),
+        uint!(0xfe5dee046a99a2a811c461f1969c3053_U256),
+        uint!(0xfcbe86c7900a88aedcffc83b479aa3a4_U256),
+        uint!(0xf987a7253ac413176f2b074cf7815e54_U256),
+        uint!(0xf3392b0822b70005940c7a398e4b70f3_U256),
+        uint!(0xe7159475a2c29b7443b29c7fa6e889d9_U256),
+        uint!(0xd097f3bdfd2022b8845ad8f792aa5825_U256),
+        uint!(0xa9f746462d870fdf8a65dc1f90e061e5_U256),
+        uint!(0x70d869a156d2a1b890bb3df62baf32f7_U256),
+        uint!(0x31be135f97d08fd981231505542fcfa6_U256),
+        uint!(0x9aa508b5b7a84e1c677de54f3e99bc9_U256),
+        uint!(0x5d6af8dedb81196699c329225ee604_U256),
+        uint!(0x2216e584f5fa1ea926041bedfe98_U256),
+        uint!(0x48a170391f7dc42444e8fa2_U256),
+    ];
+
+    /// sqrt(1.0001^tick) as Q64.96 — TickMath.getSqrtRatioAtTick.
+    fn u256_sqrt_ratio_at_tick(tick: i32) -> anyhow::Result<U256> {
+        let at = tick.unsigned_abs();
+        ensure!(at <= MAX_TICK as u32, "tick {tick} out of range");
+        let mut ratio = if at & 1 != 0 {
+            uint!(0xfffcb933bd6fad37aa2d162d1a594001_U256)
+        } else {
+            U256::ONE << 128usize
+        };
+        for (i, f) in U256_TICK_FACTORS.iter().enumerate() {
+            if at & (1 << (i + 1)) != 0 {
+                // ratio stays < 2^128 once multiplied by sub-2^128 factors: the
+                // 256-bit product cannot overflow (same argument as the Solidity).
+                ratio = (ratio * f) >> 128usize;
+            }
+        }
+        if tick > 0 {
+            ratio = U256::MAX / ratio;
+        }
+        let round = if (ratio & ((U256::ONE << 32usize) - U256::ONE)).is_zero() {
+            U256::ZERO
+        } else {
+            U256::ONE
+        };
+        Ok((ratio >> 32usize) + round)
+    }
+
+    /// Greatest tick whose sqrt ratio is <= `s` — TickMath.getTickAtSqrtRatio.
+    fn u256_tick_at_sqrt(s: U256) -> anyhow::Result<i32> {
+        tick_at_sqrt_range(s)?;
+
+        // Port of TickMath.getTickAtSqrtRatio. `ratio` is Q128.128 and `r`
+        // is normalized into [2^127, 2^128) before extracting 14 fractional
+        // log2 bits. The final sqrt-ratio comparison resolves the only possible
+        // one-tick ambiguity.
+        let ratio = s << 32usize;
+        let msb = ratio.log2();
+        let mut r = if msb >= 128 {
+            ratio >> (msb - 127)
+        } else {
+            ratio << (127 - msb)
+        };
+        let mut log_2 = ((msb as i128) - 128) << 64;
+        for bit in (50..=63).rev() {
+            r = (r * r) >> 127usize;
+            if r >> 128usize != U256::ZERO {
+                log_2 |= 1i128 << bit;
+                r >>= 1usize;
+            }
+        }
+
+        let log_sqrt10001 = I256::try_from(log_2).expect("Q64.64 logarithm fits I256")
+            * I256::from_raw(uint!(255738958999603826347141_U256));
+        let tick_low = (log_sqrt10001
+            - I256::from_raw(uint!(3402992956809132418596140100660247210_U256)))
+        .asr(128)
+        .as_i32();
+        let tick_high = (log_sqrt10001
+            + I256::from_raw(uint!(291339464771989622907027621153398088495_U256)))
+        .asr(128)
+        .as_i32();
+
+        if tick_low == tick_high || u256_sqrt_ratio_at_tick(tick_high)? > s {
+            Ok(tick_low)
+        } else {
+            Ok(tick_high)
+        }
+    }
+
     fn reference_tick_at_sqrt(s: U256) -> anyhow::Result<i32> {
         ensure!(
             s >= MIN_SQRT_RATIO && s < MAX_SQRT_RATIO,
@@ -421,6 +556,60 @@ mod tests {
                 amount1_delta(a, b, l, true).ok(),
                 muldiv_up(l, hi - lo, Q96).ok(),
                 "{l} {a} {b} up"
+            );
+        }
+    }
+
+    /// One division by √a·√b against Solidity's two (by √b, then by √a):
+    /// random widths reach the single division, the fallback where √a·√b
+    /// does not fit, and both rounding directions.
+    #[test]
+    fn amount0_delta_divides_once_exactly_as_twice() {
+        let solidity = |a: U256, b: U256, l: U256, up: bool| -> Option<U256> {
+            let (a, b) = if a > b { (b, a) } else { (a, b) };
+            if a.is_zero() {
+                return None;
+            }
+            let (n1, n2) = (l << 96usize, b - a);
+            if up {
+                div_up(muldiv_up(n1, n2, b).ok()?, a).ok()
+            } else {
+                Some(muldiv(n1, n2, b).ok()? / a)
+            }
+        };
+        let mut state = 0x3c6e_f372_fe94_f82b;
+        for i in 0..20_000u32 {
+            let width = |x: U256, bits: u32| x >> (256 - bits as usize);
+            let l = width(next_u256(&mut state), 1 + i % 160);
+            let a = width(next_u256(&mut state), 1 + (i / 7) % 192);
+            let b = width(next_u256(&mut state), 1 + (i / 13) % 192);
+            for up in [false, true] {
+                assert_eq!(
+                    amount0_delta(a, b, l, up).ok(),
+                    solidity(a, b, l, up),
+                    "{l} {a} {b} {up}"
+                );
+            }
+        }
+    }
+
+    /// The wrap flag `next_sqrt_from_amount0_up` reads, against Solidity's
+    /// `product / amount == sqrtPX96` it replaces.
+    #[test]
+    fn the_wrap_flag_matches_the_division_test() {
+        let mut state = 0x6a09_e667_f3bc_c908;
+        for i in 0..20_000u32 {
+            let width = |x: U256, bits: u32| x >> (256 - bits as usize);
+            let amount = width(next_u256(&mut state), 1 + i % 256);
+            let sqrt_p = width(next_u256(&mut state), 1 + (i / 7) % 256);
+            if amount.is_zero() {
+                continue;
+            }
+            let product = amount.wrapping_mul(sqrt_p);
+            assert_eq!(
+                !amount.overflowing_mul(sqrt_p).1,
+                product / amount == sqrt_p,
+                "{amount} {sqrt_p}"
             );
         }
     }
@@ -488,6 +677,55 @@ mod tests {
             assert_eq!(div_up(a, b).unwrap(), expected);
         }
         assert!(div_up(U256::ONE, U256::ZERO).is_err());
+    }
+
+    /// The u128 kernels against the U256 port they replaced: every tick near
+    /// the current price, a stride across the whole range and its ends, each
+    /// tick's price and its neighbours for the inverse, and random prices.
+    #[test]
+    fn u128_tick_math_matches_the_u256_port() {
+        let ticks = (-30_000..=30_000)
+            .chain((MIN_TICK..=MAX_TICK).step_by(97))
+            .chain((MIN_TICK..MIN_TICK + 16).chain(MAX_TICK - 16..=MAX_TICK));
+        for tick in ticks {
+            let price = sqrt_ratio_at_tick(tick).unwrap();
+            assert_eq!(price, u256_sqrt_ratio_at_tick(tick).unwrap(), "tick {tick}");
+            for s in [price - U256::ONE, price, price + U256::ONE] {
+                assert_eq!(
+                    tick_at_sqrt(s).ok(),
+                    u256_tick_at_sqrt(s).ok(),
+                    "sqrt ratio {s}"
+                );
+            }
+        }
+        let span = MAX_SQRT_RATIO - MIN_SQRT_RATIO;
+        let mut state = 0xbb67_ae85_84ca_a73b;
+        for _ in 0..20_000 {
+            let s = MIN_SQRT_RATIO + next_u256(&mut state) % span;
+            assert_eq!(
+                tick_at_sqrt(s).unwrap(),
+                u256_tick_at_sqrt(s).unwrap(),
+                "{s}"
+            );
+        }
+        assert!(sqrt_ratio_at_tick(MAX_TICK + 1).is_err());
+        assert!(sqrt_ratio_at_tick(MIN_TICK - 1).is_err());
+    }
+
+    #[test]
+    #[ignore = "exhaustive u128 TickMath proof; run explicitly (release: a few seconds)"]
+    fn u128_tick_math_matches_the_u256_port_at_every_tick() {
+        for tick in MIN_TICK..=MAX_TICK {
+            let price = sqrt_ratio_at_tick(tick).unwrap();
+            assert_eq!(price, u256_sqrt_ratio_at_tick(tick).unwrap(), "tick {tick}");
+            for s in [price - U256::ONE, price, price + U256::ONE] {
+                assert_eq!(
+                    tick_at_sqrt(s).ok(),
+                    u256_tick_at_sqrt(s).ok(),
+                    "sqrt ratio {s}"
+                );
+            }
+        }
     }
 
     #[test]
