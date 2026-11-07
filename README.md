@@ -10,11 +10,11 @@ trade across pools, bounds how far the result can be from the best split (the
 duality-gap certificate), and simulates each transaction at the chain head
 before offering it.
 
-![How a Sextant quote works: WETH is split across six venues, three ribbons bend through connector tokens, everything converges into USDC, and the split is certified and settled in one transaction](assets/sextant.gif)
+![How a Sextant quote works: WETH is split across six venues over paths of one to three hops through USDT and DAI, converging into USDC, then certified and settled in one transaction](assets/sextant.gif)
 
-*Illustrative: one WETH quote, six venues, two of them reached through a
-connector token. The real work is integer arithmetic over one block's pool
-state.*
+*Illustrative: one WETH quote whose six legs take one to three hops through
+two connector tokens. The real work is integer arithmetic over one block's
+pool state.*
 
 > Early software. The quote path is end to end, but this is not yet the
 > production solver, and nothing here is a price or uptime guarantee.
@@ -115,6 +115,7 @@ module, and the process `Config` lives at `sextant::config::Config`.
    replaced at about 1.5 s of age; a snapshot older than 2 s is pulled again.
    `meta.source` says which: `resident`, `memory` or `pull`.
 2. **Search.** Exact integer models of every venue, with splits across pools.
+   A leg may take up to three hops through a connector token (`MAX_ROUTE_HOPS`).
    Nothing is replayed in an EVM while searching. A resident quote may widen
    its graph and search again (see "Which connectors a quote routes").
 3. **Build**, when the request names a `recipient`. ERC-20 input goes through
