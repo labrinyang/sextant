@@ -263,10 +263,7 @@ pub(super) async fn discover_by_factories(
 /// and the stable) has a pool, named and proved as a quote names and proves
 /// one. An RPC on another chain fails here, because a factory with no code
 /// answers with no address word.
-pub(crate) async fn verify_factory_discovery(
-    profile: &ChainProfile,
-    rpc: &Rpc,
-) -> anyhow::Result<()> {
+pub async fn verify_factory_discovery(profile: &ChainProfile, rpc: &Rpc) -> anyhow::Result<()> {
     let discovery = profile
         .indexed_discovery()
         .filter(|discovery| discovery.candidates == CandidateSource::Factories)

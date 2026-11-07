@@ -31,8 +31,8 @@ impl UpstreamIntegrityError {
         Self(detail.into())
     }
 
-    #[cfg(test)]
-    pub(crate) fn test_only(detail: impl Into<Arc<str>>) -> Self {
+    #[cfg(any(test, feature = "testing"))]
+    pub fn test_only(detail: impl Into<Arc<str>>) -> Self {
         Self::new(detail)
     }
 }
@@ -66,13 +66,13 @@ mod robinhood;
 mod settings;
 mod v4_keys;
 pub use execution::*;
-pub(crate) use factories::*;
-pub(crate) use indexed::*;
-pub(crate) use lens_parse::*;
+pub use factories::*;
+pub use indexed::*;
+pub use lens_parse::*;
 pub use pool_ids::*;
 use robinhood::snapshot_at_observed_profile;
-pub(crate) use settings::*;
-pub(crate) use v4_keys::*;
+pub use settings::*;
+pub use v4_keys::*;
 
 sol! {
     function globalState() external view;
@@ -87,7 +87,7 @@ sol! {
     ) external returns (bytes4 selector, uint24 overrideFee, uint24 pluginFee);
 }
 
-pub(crate) struct ObservedSnapshot {
+pub struct ObservedSnapshot {
     pub snapshot: Snapshot,
     /// Empty unless connector screening is on; see `ScreeningPools`.
     pub screening: ScreeningPools,
@@ -142,7 +142,7 @@ enum Probe {
 /// `snapshot_at_for`, by tools. Every caller passes the profile of the chain it
 /// reads, so an enabled endpoint can never fall through to the
 /// Robinhood-specific QuoteLens/address graph on another chain.
-pub(crate) async fn snapshot_at_observed_for(
+pub async fn snapshot_at_observed_for(
     profile: &ChainProfile,
     rpc: &Rpc,
     indexer: Option<&IndexerClient>,

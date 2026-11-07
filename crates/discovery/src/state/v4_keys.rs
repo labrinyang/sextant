@@ -75,7 +75,7 @@ static CONFIGURED_LOGS_RPC: OnceLock<Rpc> = OnceLock::new();
 /// Install the already chain-verified logs endpoint. A second, different
 /// endpoint is rejected: global topology caches intentionally belong to one
 /// profile and one logs source for the process lifetime.
-pub(crate) fn configure_logs_rpc(rpc: Rpc) -> anyhow::Result<()> {
+pub fn configure_logs_rpc(rpc: Rpc) -> anyhow::Result<()> {
     if let Some(current) = CONFIGURED_LOGS_RPC.get() {
         ensure!(
             current.url == rpc.url,

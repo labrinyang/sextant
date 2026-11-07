@@ -131,7 +131,7 @@ pub struct ExecutionIdentity {
 /// Resolve and verify every contract that can receive a user approval or
 /// execute solver calldata. The registry lookup remains block-pinned while
 /// immutable runtimes are cached by chain and address.
-pub(crate) async fn verify_execution_adapter_at(
+pub async fn verify_execution_adapter_at(
     profile: &ChainProfile,
     rpc: &Rpc,
     block: BlockId,
@@ -163,16 +163,14 @@ pub(crate) async fn verify_execution_adapter_at(
 
 /// The registry read that names the current Settler, for a caller that reads
 /// it beside other state in one multicall.
-pub(crate) fn execution_registry_call(
-    profile: &ChainProfile,
-) -> anyhow::Result<(Address, Vec<u8>)> {
+pub fn execution_registry_call(profile: &ChainProfile) -> anyhow::Result<(Address, Vec<u8>)> {
     settler_registry_call(profile)
 }
 
 /// `verify_execution_adapter_at`, from a registry answer already read at
 /// `block`. `Ok(None)` is the registry having no current Settler, which leaves
 /// quotes indicative exactly as the per-pair snapshot does.
-pub(crate) async fn execution_identity_from(
+pub async fn execution_identity_from(
     profile: &ChainProfile,
     rpc: &Rpc,
     block: BlockId,

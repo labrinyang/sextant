@@ -12,7 +12,7 @@ use sextant_amm::snapshot::Snapshot;
 
 /// One Lens read of the resident pools, parsed exactly as an indexed
 /// snapshot is.
-pub(crate) fn parse_resident_lens(
+pub fn parse_resident_lens(
     v3pools: &[V3Pool],
     v2pools: &[V2Pool],
     result: &crate::lens::PeekResult,

@@ -107,7 +107,7 @@ pub(super) enum PoolNamer<'a> {
 /// Where `snapshot_at_observed_indexed` finds a pair's listed skeletons: from
 /// `a` to `b` beside `statics`, through the connectors a pool list kept outside
 /// state (the resident's) has pools for.
-pub(crate) trait ListedPaths: Send + Sync {
+pub trait ListedPaths: Send + Sync {
     fn listed_paths(&self, statics: &[Address], a: Address, b: Address) -> Vec<Vec<Address>>;
 }
 
@@ -290,7 +290,7 @@ pub(super) async fn snapshot_at_observed_indexed(
 /// is returned with the reason instead of failing the others: a list is a
 /// suggestion, and one wrong row must not cost every listed pool its quotes.
 /// A V3 row's tick spacing is the factory's for its fee.
-pub(crate) async fn prove_listed_pools(
+pub async fn prove_listed_pools(
     profile: &ChainProfile,
     discovery: &IndexedEvmDiscovery,
     rpc: &Rpc,

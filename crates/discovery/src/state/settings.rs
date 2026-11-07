@@ -227,7 +227,7 @@ pub(super) fn ranked_setting_admitted(ranked: bool, mode: DynamicConnectorMode) 
 /// Reported at `/health` for the same reason screening is: with the ranking
 /// unpublished the solver falls back to the walk and still answers, so a flat
 /// reading cannot distinguish a flag that took from one that did not.
-pub(crate) fn ranked_connectors() -> bool {
+pub fn ranked_connectors() -> bool {
     *RANKED_CONNECTORS
 }
 
@@ -246,7 +246,7 @@ fn read_dynamic_connector_mode() -> anyhow::Result<DynamicConnectorMode> {
     }
 }
 
-pub(crate) fn dynamic_connector_mode() -> &'static str {
+pub fn dynamic_connector_mode() -> &'static str {
     DYNAMIC_CONNECTORS.as_str()
 }
 
@@ -257,7 +257,7 @@ pub(crate) fn dynamic_connector_mode() -> &'static str {
 /// `catalogGapBps`, so a flat reading is indistinguishable from a flag that
 /// never took. Operators flipping it need to confirm it took, and the release
 /// gate needs to prove the shipped default is off.
-pub(crate) fn connector_screening() -> bool {
+pub fn connector_screening() -> bool {
     *CONNECTOR_SCREENING
 }
 
@@ -269,7 +269,7 @@ pub(crate) fn connector_screening() -> bool {
 /// produces is byte-identical to the ranking's. A flat reading therefore cannot
 /// distinguish a flag that took from one that did not, and this flag is the
 /// first in the group that can change a served quote.
-pub(crate) fn connector_admission() -> bool {
+pub fn connector_admission() -> bool {
     *CONNECTOR_ADMISSION
 }
 
@@ -279,7 +279,7 @@ pub(crate) fn connector_admission() -> bool {
 /// admits. A threshold set past every measured value is indistinguishable at
 /// `/health` from admission being off, and §16 measured the whole population
 /// between 0.19 and 30.9 bp — a range a single mistyped zero clears entirely.
-pub(crate) fn connector_min_bps_e4() -> String {
+pub fn connector_min_bps_e4() -> String {
     crate::certificate::format_bps_e4(*CONNECTOR_MIN_BPS_E4)
 }
 
@@ -296,10 +296,7 @@ pub(super) fn connector_mode_admitted(
 
 /// Validate every state/discovery setting before the server starts accepting
 /// traffic. The lazies below retain cheap process-wide access on the hot path.
-pub(crate) fn validate_settings(
-    profile: &ChainProfile,
-    logs_url: Option<&str>,
-) -> anyhow::Result<()> {
+pub fn validate_settings(profile: &ChainProfile, logs_url: Option<&str>) -> anyhow::Result<()> {
     let bitmap_words = read_env_value("SOLVER_BITMAP_WORDS", 16i32)?;
     ensure!(
         (0..=8192).contains(&bitmap_words),
@@ -353,7 +350,7 @@ pub(crate) fn validate_settings(
 
 /// The tick-bitmap window each side of a pool's current word, as every
 /// snapshot reads it.
-pub(crate) fn bitmap_words() -> anyhow::Result<u16> {
+pub fn bitmap_words() -> anyhow::Result<u16> {
     u16::try_from(*BITMAP_WORDS)
         .ok()
         .filter(|&words| words <= 8192) // keeps every window word inside int16

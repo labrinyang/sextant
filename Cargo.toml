@@ -81,6 +81,7 @@ ekubo_sdk.workspace = true
 sextant-exec = { path = "crates/exec", features = ["testing"] }
 sextant-rfq = { path = "crates/rfq", features = ["testing"] }
 sextant-route = { path = "crates/route", features = ["testing"] }
+sextant-discovery = { path = "crates/discovery", features = ["testing"] }
 sextant-chain = { path = "crates/chain", features = ["fixtures"] }
 # Paused clocks for timer tests.
 tokio = { version = "1.53.0", features = ["full", "test-util"] }
