@@ -1,0 +1,7 @@
+# One compiler for local builds, the gates and CI, so a new stable's lints or
+# codegen never change a result between them. Bump it deliberately, with the
+# gates and the benchmark run on the new version.
+[toolchain]
+channel = "1.97.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

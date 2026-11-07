@@ -277,10 +277,12 @@ cargo test --examples --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-The suite builds and runs on Linux and macOS; CI runs these commands plus `cargo
-fmt --check` and a feature-free clippy of each crate's library. The routing
-golden (`amount_out=994246489566748118282`) is pinned in `examples/route_profile.rs`
-and in the release benchmark the workflow runs.
+The suite builds and runs on Linux and macOS. CI runs these commands plus `cargo
+fmt --check` and a feature-free clippy of every crate's library, on the compiler
+`rust-toolchain.toml` pins, and checks that 1.94.1, the declared minimum, still
+builds every target. The routing golden (`amount_out=994246489566748118282`) is
+pinned in `examples/route_profile.rs` and in the release benchmark the workflow
+runs.
 
 Contract source is never verified or published on an explorer from this
 repository; comparing deployed bytecode with a local build uploads nothing.

@@ -9,8 +9,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # The same compiler as rust-toolchain.toml, so a new stable's lints do
+      # not turn the build red between commits.
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
@@ -18,10 +21,22 @@ jobs:
       # The workspace build unifies dev-dependency features, which can hide a
       # warning in a member built alone. Build each member's library, and the
       # application, without them.
-      - run: cargo clippy -p sextant-route -p sextant-io -p sextant-rfq -p sextant-exec -p sextant-budget --lib --locked -- -D warnings
+      - run: cargo clippy --workspace --exclude sextant --lib --locked -- -D warnings
       - run: cargo clippy -p sextant --lib --bins --locked -- -D warnings
       - run: cargo test --workspace --locked
       - run: cargo test --examples --locked
       - run: cargo run --release --locked --example route_profile | tee route_profile.out
       - run: grep -q 'amount_out=994246489566748118282' route_profile.out
       - run: grep -q 'consistent=true' route_profile.out
+
+  # The oldest compiler the packages declare (`rust-version`) still builds
+  # every target.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo +1.94.1 check --workspace --all-targets --locked
