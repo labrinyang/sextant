@@ -32,7 +32,7 @@ fn narrow(q: U512) -> anyhow::Result<U256> {
 
 fn muldiv_rem(a: U256, b: U256, d: U256) -> anyhow::Result<(U256, bool)> {
     ensure!(d != U256::ZERO, "muldiv by zero");
-    if let Some(product) = a.checked_mul(b) {
+    if let Some(product) = checked_mul(a, b) {
         let (q, r) = product.div_rem(d);
         Ok((q, !r.is_zero()))
     } else {
@@ -113,6 +113,25 @@ fn mul_wide(a: u128, b: u128) -> (u128, u128) {
     let lo = (p00 & LOW) | (mid << 64);
     let hi = p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64);
     (hi, lo)
+}
+
+/// `a.checked_mul(b)`, with one 128×128 product when both fit 128 bits (it
+/// cannot overflow then): prices, liquidity and step amounts nearly always
+/// do, and the general product multiplies all four limbs of each.
+fn checked_mul(a: U256, b: U256) -> Option<U256> {
+    let (x, y) = (a.as_limbs(), b.as_limbs());
+    if x[2] | x[3] | y[2] | y[3] == 0 {
+        let x = u128::from(x[0]) | (u128::from(x[1]) << 64);
+        let y = u128::from(y[0]) | (u128::from(y[1]) << 64);
+        let (hi, lo) = mul_wide(x, y);
+        return Some(U256::from_limbs([
+            lo as u64,
+            (lo >> 64) as u64,
+            hi as u64,
+            (hi >> 64) as u64,
+        ]));
+    }
+    a.checked_mul(b)
 }
 
 /// sqrt(1.0001^tick) as Q64.96 — TickMath.getSqrtRatioAtTick. Each step of
@@ -294,7 +313,7 @@ pub fn amount0_delta(sqrt_a: U256, sqrt_b: U256, l: U256, round_up: bool) -> any
     // nested ceiling: ⌊⌊x/b⌋/a⌋ = ⌊x/(ab)⌋ and ⌈⌈x/b⌉/a⌉ = ⌈x/(ab)⌉. So when
     // √a·√b fits 256 bits one division gives the same value. Neither form
     // can overflow: the first quotient is below numerator1 since √b > √b−√a.
-    if let Some(denominator) = sqrt_a.checked_mul(sqrt_b) {
+    if let Some(denominator) = checked_mul(sqrt_a, sqrt_b) {
         return if round_up {
             muldiv_up(numerator1, numerator2, denominator)
         } else {
@@ -316,7 +335,7 @@ pub fn amount1_delta(sqrt_a: U256, sqrt_b: U256, l: U256, round_up: bool) -> any
     };
     // l·(√b−√a)/2^96, as muldiv(_up) by Q96 gives it: the divisor is a
     // power of two, so the quotient is a shift and the remainder a mask.
-    let (q, has_remainder) = match l.checked_mul(sqrt_b - sqrt_a) {
+    let (q, has_remainder) = match checked_mul(l, sqrt_b - sqrt_a) {
         Some(product) => (product >> 96usize, !(product & Q96_MASK).is_zero()),
         None => {
             let product: U512 = l.widening_mul(sqrt_b - sqrt_a);
@@ -591,6 +610,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The 128×128 shortcut against the general checked product: random
+    /// widths reach the shortcut, the general product and the overflow.
+    #[test]
+    fn the_narrow_product_matches_the_checked_product() {
+        let mut state = 0x510e_527f_ade6_82d1;
+        for i in 0..50_000u32 {
+            let width = |x: U256, bits: u32| x >> (256 - bits as usize);
+            let a = width(next_u256(&mut state), 1 + i % 256);
+            let b = width(next_u256(&mut state), 1 + (i / 7) % 256);
+            assert_eq!(checked_mul(a, b), a.checked_mul(b), "{a} {b}");
+        }
+        let top = U256::from(u128::MAX);
+        assert_eq!(checked_mul(top, top), top.checked_mul(top));
     }
 
     /// The wrap flag `next_sqrt_from_amount0_up` reads, against Solidity's
