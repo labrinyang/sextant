@@ -10,11 +10,11 @@ trade across pools, bounds how far the result can be from the best split (the
 duality-gap certificate), and simulates each transaction at the chain head
 before offering it.
 
-![How a Sextant quote works: WETH is split across six venues over paths of one to three hops through USDT and DAI, converging into USDC, then certified and settled in one transaction](assets/sextant.gif)
+![How a Sextant quote works: PEPE is sold for USDC on Ethereum in six legs over nine Uniswap, Sushi and PancakeSwap pools, on paths of one to three hops through the WETH and USDT connectors, then certified and settled in one transaction](assets/sextant.gif)
 
-*Illustrative: one WETH quote whose six legs take one to three hops through
-two connector tokens. The real work is integer arithmetic over one block's
-pool state.*
+*Illustrative: one PEPE → USDC quote on Ethereum, split into six legs of one to
+three hops through the WETH and USDT connectors. The real work is integer
+arithmetic over one block's pool state.*
 
 > Early software. The quote path is end to end, but this is not yet the
 > production solver, and nothing here is a price or uptime guarantee.
