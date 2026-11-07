@@ -10,9 +10,11 @@ trade across pools, bounds how far the result can be from the best split (the
 duality-gap certificate), and simulates each transaction at the chain head
 before offering it.
 
-![How a Sextant quote works: a request is split across venues, simulated exactly, bounded by a certificate, and settled in one transaction](assets/sextant.gif)
+![How a Sextant quote works: WETH is split across six venues, three ribbons bend through connector tokens, everything converges into USDC, and the split is certified and settled in one transaction](assets/sextant.gif)
 
-*Illustrative. The real work is integer arithmetic over one block's pool state.*
+*Illustrative: one WETH quote, six venues, two of them reached through a
+connector token. The real work is integer arithmetic over one block's pool
+state.*
 
 > Early software. The quote path is end to end, but this is not yet the
 > production solver, and nothing here is a price or uptime guarantee.
