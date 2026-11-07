@@ -30,7 +30,7 @@
 // cap prevents arbitrary token pairs from growing memory without bound.
 
 use crate::chain::ChainProfile;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 use crate::chain::ROBINHOOD_PROFILE;
 use crate::freshness::{FINISH_GRACE, STALE};
 use crate::indexer::IndexerClient;
@@ -139,7 +139,7 @@ impl Stamped {
     }
 
     /// The same block's stamp over a wider resident graph.
-    pub(crate) fn widened(&self, graph: crate::resident::Widened) -> Arc<Self> {
+    pub fn widened(&self, graph: crate::resident::Widened) -> Arc<Self> {
         Arc::new(Stamped {
             snap: graph.snapshot,
             screening: ScreeningPools::default(),
@@ -158,12 +158,12 @@ impl Stamped {
         self.at.elapsed()
     }
 
-    pub(crate) fn is_fresh(&self) -> bool {
+    pub fn is_fresh(&self) -> bool {
         self.age() <= STALE
     }
 
     /// Young enough for a quote that started while it was fresh to finish.
-    pub(crate) fn is_fresh_to_finish(&self) -> bool {
+    pub fn is_fresh_to_finish(&self) -> bool {
         self.age() <= STALE + FINISH_GRACE
     }
 
@@ -501,7 +501,7 @@ async fn start_pull(
 }
 
 impl Engine {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn new(rpc: Rpc) -> Arc<Engine> {
         Self::for_profile(rpc, &ROBINHOOD_PROFILE)
     }
@@ -547,7 +547,7 @@ impl Engine {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub fn new_pinned(rpc: Rpc, block: u64) -> Arc<Engine> {
         Self::for_profile_pinned(rpc, &ROBINHOOD_PROFILE, None, block)
     }
@@ -621,8 +621,8 @@ impl Engine {
         self.snapshot_from(a, b, min_block).await
     }
 
-    #[cfg(test)]
-    pub(crate) fn cache_snapshot_for_test(
+    #[cfg(any(test, feature = "testing"))]
+    pub fn cache_snapshot_for_test(
         &self,
         a: Address,
         b: Address,

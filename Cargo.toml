@@ -61,6 +61,7 @@ sextant-route = { path = "crates/route" }
 sextant-io = { path = "crates/io" }
 sextant-rfq = { path = "crates/rfq" }
 sextant-discovery = { path = "crates/discovery" }
+sextant-market = { path = "crates/market" }
 sextant-exec = { path = "crates/exec" }
 sextant-observe = { path = "crates/observe" }
 tracing = "0.1.44"
@@ -82,6 +83,7 @@ sextant-exec = { path = "crates/exec", features = ["testing"] }
 sextant-rfq = { path = "crates/rfq", features = ["testing"] }
 sextant-route = { path = "crates/route", features = ["testing"] }
 sextant-discovery = { path = "crates/discovery", features = ["testing"] }
+sextant-market = { path = "crates/market", features = ["testing"] }
 sextant-chain = { path = "crates/chain", features = ["fixtures"] }
 # Paused clocks for timer tests.
 tokio = { version = "1.53.0", features = ["full", "test-util"] }

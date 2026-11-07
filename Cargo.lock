@@ -3704,6 +3704,7 @@ dependencies = [
  "sextant-discovery",
  "sextant-exec",
  "sextant-io",
+ "sextant-market",
  "sextant-observe",
  "sextant-rfq",
  "sextant-route",
@@ -3793,6 +3794,28 @@ dependencies = [
  "serde_json",
  "sextant-budget",
  "tokio",
+]
+
+[[package]]
+name = "sextant-market"
+version = "0.1.0"
+dependencies = [
+ "alloy",
+ "alloy-primitives 1.6.1",
+ "anyhow",
+ "arc-swap",
+ "axum",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sextant-amm",
+ "sextant-chain",
+ "sextant-discovery",
+ "sextant-io",
+ "sextant-route",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

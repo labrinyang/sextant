@@ -7,13 +7,11 @@ pub use sextant_chain::{catalog, chain, manifest};
 pub use sextant_discovery::{ekubo, indexer, lens, state};
 pub use sextant_exec::{settler, simulation};
 pub use sextant_io::{abi, process_memory, rpc, rpc_dispatch, work_budget};
+pub use sextant_market::{engine, resident};
 pub use sextant_rfq::{native_coordinator, rfq};
 pub use sextant_route::{certificate, counterfactual, route, topology, universe};
 
 pub mod config;
-pub mod engine;
-pub(crate) mod freshness;
 pub(crate) mod quote_metrics;
 pub mod quotes;
-pub mod resident;
 pub mod server;

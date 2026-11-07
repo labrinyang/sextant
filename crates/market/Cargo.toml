@@ -1,0 +1,36 @@
+[package]
+name = "sextant-market"
+description = "Sextant's market state: the per-pair snapshot engine and the resident pool reader, over discovery's snapshots."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[features]
+# Test-only constructors and seeders for dependents' tests.
+testing = []
+
+[dependencies]
+sextant-amm = { path = "../amm" }
+sextant-chain = { path = "../chain" }
+sextant-discovery = { path = "../discovery" }
+sextant-io = { path = "../io" }
+sextant-route = { path = "../route" }
+alloy = { version = "2.2.0", default-features = false, features = ["eips"] }
+alloy-primitives.workspace = true
+anyhow.workspace = true
+arc-swap = "1.7.1"
+futures-util = "0.3"
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.53.0", features = ["full"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+axum = "0.8.9"
+# The fixture chain the tests read, and discovery's test constructors.
+sextant-chain = { path = "../chain", features = ["fixtures"] }
+sextant-discovery = { path = "../discovery", features = ["testing"] }
+tokio = { version = "1.53.0", features = ["full", "test-util"] }

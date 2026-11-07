@@ -521,8 +521,8 @@ impl Resident {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn publish_for_test(
+    #[cfg(any(test, feature = "testing"))]
+    pub fn publish_for_test(
         &self,
         snapshot: Snapshot,
         canonical: CanonicalBlock,
