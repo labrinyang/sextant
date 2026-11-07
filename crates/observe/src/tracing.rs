@@ -122,6 +122,33 @@ mod tests {
             .collect()
     }
 
+    /// The binary names its own crate, `sextant`. A target matches by prefix,
+    /// so the workspace's member crates (`sextant_discovery`,
+    /// `sextant_market`, ...) are written under that name too, and a
+    /// dependency's events still are not.
+    #[test]
+    fn member_crates_are_written_under_the_binary_s_name() {
+        let buffer = Buffer::default();
+        let subscriber =
+            tracing_subscriber::registry().with(layer(LogFormat::Json, "sextant", buffer.clone()));
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "sextant::server", "server");
+            tracing::info!(target: "sextant_discovery::state::indexed", "discovery");
+            tracing::info!(target: "sextant_market::resident", "market");
+            tracing::info!(target: "hyper::client", "dependency");
+        });
+        let bytes = buffer.0.lock().unwrap().clone();
+        let messages: Vec<String> = String::from_utf8(bytes)
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let event: serde_json::Value = serde_json::from_str(line).unwrap();
+                event["message"].as_str().unwrap().to_owned()
+            })
+            .collect();
+        assert_eq!(messages, ["server", "discovery", "market"]);
+    }
+
     const POOL: &str = "pool 0x5151 skipped (balance below reserve)";
     const READINESS: &str = "readiness: ready=false (transport)";
 
