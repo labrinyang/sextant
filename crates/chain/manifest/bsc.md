@@ -6,8 +6,8 @@
 
 Tokens a BSC dynamic connector may be — reviewed 2026-08-06.
 
-Rebuild with `scripts/connector_allowlist.py`, which reads the indexer's own
-ranking for a sample of live pairs and prices every candidate it offers
+The maintainers rebuild it with an unpublished script that reads the
+indexer's own ranking for a sample of live pairs and prices every candidate it offers
 against GeckoTerminal. The rule, applied to that table:
 
   market cap ≥ $50M, or no market cap at all with fully-diluted ≥ $50M and

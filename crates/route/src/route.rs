@@ -121,7 +121,7 @@ const THREE_HOP_PROBE_DIVISORS: [u32; 6] = [1, 2, 4, 8, 16, 64];
 /// it does not depend on how many candidates were offered. A share threshold
 /// culls more as the candidate set grows, which is what made the allocator
 /// non-monotone in its own universe
-/// (`the maintainers' research notes` §4); a constant budget keeps
+/// (unpublished allocator-monotonicity notes, §4); a constant budget keeps
 /// `min(K, live)` legs whatever is on the table.
 const MAX_SPLIT_LEGS: usize = 128;
 /// Maximum direct/two-hop candidates materialized for one quote topology.
@@ -884,7 +884,7 @@ fn best_quantized_candidate(
 /// It exists so a coverage solve can be seeded with a plan that is already known
 /// feasible, making the widened side monotone by construction rather than by
 /// hoping the heuristic finds what it was handed
-/// (`the maintainers' research notes` §7 fix C). The returned plan
+/// (unpublished allocator-monotonicity notes, §7 fix C). The returned plan
 /// carries `universe_id`, so a seeded winner is labelled by the universe it was
 /// re-evaluated in rather than the one it came from.
 pub fn requantize_plan_in(
@@ -2121,7 +2121,7 @@ fn best_split_plan_with_budget(
         // reallocates their flow onto worse marginals, and how much that costs
         // depends on how many candidates were on the table — which is what makes
         // the allocator non-monotone in its candidate set
-        // (`the maintainers' research notes` §4). Keeping whichever
+        // (unpublished allocator-monotonicity notes, §4). Keeping whichever
         // plan delivers more removes that dependence and can never lose output.
         // Ties go to the culled plan, so the floor still buys fewer legs
         // wherever fewer legs are free.
@@ -3293,7 +3293,7 @@ mod tests {
     /// the plan one leg, and at `L ≥ C` no leg cleared the floor at all and the
     /// split collapsed to a single path: widening 200 identical pools to 256
     /// cost **96 bps**, which is a coverage measurement's whole signal
-    /// (`the maintainers' research notes` §4). Keeping whichever plan
+    /// (unpublished allocator-monotonicity notes, §4). Keeping whichever plan
     /// delivers more removes the dependence on the candidate count.
     #[test]
     fn widening_the_candidate_set_never_lowers_the_plan() {

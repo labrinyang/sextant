@@ -36,8 +36,8 @@
 // overflow. No floating point is involved anywhere in this file. The emitted
 // bound is thus valid against the arithmetic itself, not merely against a
 // convergence argument — which is the property no production router and, as of
-// 2026, no first-order optimization solver publishes. See
-// the maintainers' research notes §4.6.
+// 2026, no first-order optimization solver publishes. See the unpublished
+// routing-frontier notes, §4.6.
 //
 // SCOPE, STATED HONESTLY. T_p is the pool's trade set AS MODELLED BY THE
 // SNAPSHOT: the concentrated-liquidity walk stops at the edge of the tick
@@ -97,7 +97,7 @@ pub fn read_enabled() -> anyhow::Result<bool> {
 /// certificate wall time. The BFGS it replaced needed twice the time for
 /// p95 17 bps and froze on SLVR pairs at 21.7 bps regardless of budget. How
 /// 128 was picked, the BFGS-era pathologies, and the seed fix that preceded
-/// this: `certificate-tighten-budget-2026-08-01.md`.
+/// this: the unpublished certificate-tighten-budget notes.
 static TIGHTEN_BUDGET: LazyLock<usize> =
     LazyLock::new(|| read_tighten_budget().unwrap_or_else(|error| panic!("{error:#}")));
 
@@ -999,7 +999,7 @@ pub struct ScreenedValue {
     /// It is also the term that decides `arb`. A relaxed price overstated by κ
     /// inflates this connector's arb by roughly `½·TVL·(√κ−1)²`, so comparing
     /// it against any independent reference reads κ off directly — see
-    /// `the maintainers' research notes` §11. The solver forms no opinion
+    /// the unpublished dynamic-connectors notes, §11. The solver forms no opinion
     /// about which reference is right; it publishes the number it used.
     pub price: Price,
     /// The same sum, at the price that MINIMISES it rather than the one the
@@ -1014,7 +1014,7 @@ pub struct ScreenedValue {
     /// Zero here is a **proof**: it says a price exists at which no screened pool
     /// touching this connector is arbitrageable, so routing through it cannot
     /// beat the served quote by more than the certified gap. See
-    /// `the maintainers' research notes`.
+    /// the unpublished connector dual-price notes.
     pub min_arb: U256,
     /// The price `min_arb` was evaluated at, so the minimum is checkable by the
     /// same holder who can re-evaluate `arb` from `price`.
@@ -2132,7 +2132,7 @@ pub fn certify_in_universe_with_budget(
     // with a `u64::MAX` fallback published 1844674407370955.1615 — `u64::MAX/10⁴`
     // — as though it were a measurement, which is exactly what `graph_gap_bps`
     // returned for WBNB→ZEC on 2026-08-05. A screened bound is loose by
-    // TVL/amount (see `the maintainers' research notes` §11), so this range
+    // TVL/amount (see the unpublished dynamic-connectors notes, §11), so this range
     // is reachable in normal operation rather than only under a defect.
     let bps_e4 = |bound: U256| ratio_bps_e4(bound.saturating_sub(achieved), achieved);
     let mut prices: Vec<(Address, Price)> = prices.into_iter().collect();
@@ -2176,7 +2176,7 @@ pub fn certify(
 /// Full width the whole way. Narrowing the ratio to `u64` is what published
 /// `u64::MAX/10⁴` as though it were a measurement, and a screened bound reaches
 /// that range in normal operation rather than only under a defect
-/// (`the maintainers' research notes` §11).
+/// (unpublished dynamic-connectors notes, §11).
 ///
 /// Rounds up, so a reported ratio never understates what was left on the table.
 ///
@@ -2444,8 +2444,8 @@ mod tests {
     /// universe touches it — so weak duality lets the bound be evaluated at the
     /// price that minimises it rather than at a max-product relaxation's upward
     /// answer. §11 read implied errors of κ = 1.22 to 2.48 off that relaxation
-    /// and concluded the bound cannot rank. This is the other choice, measured:
-    /// `the maintainers' research notes`.
+    /// and concluded the bound cannot rank. This is the other choice, measured in
+    /// the unpublished connector dual-price notes.
     #[test]
     fn the_minimising_price_prices_a_worthless_connector_at_zero() {
         let connector = Address::repeat_byte(0x77);

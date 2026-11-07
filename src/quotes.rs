@@ -1,6 +1,6 @@
 // Quote orchestration: snapshot → plan → (optional) transaction.
-// Response field names are the the server module documentation contract, byte-compatible with the
-// Julia solver's output (amounts as decimal strings, lowercase hex addresses).
+// Response field names are the HTTP contract (README, "HTTP"), byte-compatible
+// with the Julia solver's output (amounts as decimal strings, lowercase hex addresses).
 
 use crate::abi::{addrhex, tohex};
 use crate::budget::SolverBudget;
@@ -622,7 +622,7 @@ pub struct CoverageJson {
     /// two runs of a chunked heuristic, so its zero says the allocator found
     /// nothing over there; a `regretBoundBps` under the churn floor says
     /// nothing is there, from a dual that holds whatever the allocator did
-    /// (`the maintainers' research notes` §6).
+    /// (unpublished allocator-monotonicity notes, §6).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub regret_bound_bps: Option<String>,
     /// The widened solve's own optimality gap, on the same denominator. A
@@ -707,7 +707,7 @@ pub struct ScreenedValueJson {
     /// relaxation's upward-biased one. `arbWei − minArbWei` is §11's κ priced in
     /// output wei, and a `minArbWei` of zero is a proof that routing through this
     /// connector cannot beat the quote by more than `gapBps`
-    /// (`the maintainers' research notes`).
+    /// (unpublished connector dual-price notes).
     ///
     /// `graphBoundWei` still uses `arbWei`. These two ship side by side so the
     /// difference is measurable before anything is decided on it.
@@ -790,7 +790,7 @@ pub struct CertificateJson {
 ///
 /// **0.1 bp since 2026-08-06**, measured. The line was 1 bp, chosen as the
 /// quality gate's own. Letting the minimum-share cull lose an argument
-/// (`the maintainers' research notes` §7 B) lowered the base solve's
+/// (unpublished allocator-monotonicity notes, §7 B) lowered the base solve's
 /// certified gap under that line on exactly the deep cases escalation used to
 /// win, so the re-solve stopped firing where it was paying: on the Robinhood
 /// ladder at block 29298590, six cases lost output — USDG→CASHCAT 200k by

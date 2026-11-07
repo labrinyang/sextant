@@ -6,8 +6,8 @@
 //! magnitude — `arb ≈ ½·TVL·(√κ−1)²` for a token mispriced by κ, against a true
 //! value that is O(amount_in). The looseness therefore scales as TVL/amount and
 //! no choice of ν repairs it, because the two quantities have different
-//! dimensions. `the maintainers' research notes` §11 derives this and closes
-//! the derivation against production to 0.09%.
+//! dimensions. The unpublished dynamic-connectors notes (§11) derive this and
+//! close the derivation against production to 0.09%.
 //!
 //! So this module measures instead of bounding. `V(S)` is the best output
 //! reachable using pool set `S`; the coverage question is
@@ -92,7 +92,7 @@ const COVERAGE_CACHE_CAP: usize = 512;
 /// admission moves a token between — so a verdict filed under a fingerprint
 /// could never be looked up at the moment admission needs it. Keying on the pair
 /// makes the lookup possible; carrying the fingerprint in the value lets each
-/// reader decide whether it cares (`the maintainers' research notes` §15).
+/// reader decide whether it cares (unpublished dynamic-connectors notes, §15).
 type CoverageKey = (u64, Address, Address, u32);
 
 /// The pair, without a band — what admission merges across.
@@ -562,7 +562,7 @@ pub struct CoverageValue {
     /// `V(U ∪ all) − V(U)`, both sides solved by this module at one setting.
     /// Zero PROVES that no subset of the screened connectors improves this
     /// quote at this size, by monotonicity — for as long as the allocator is
-    /// monotone, which `the maintainers' research notes` §6 shows is
+    /// monotone, which the unpublished allocator-monotonicity notes (§6) show is
     /// a weaker footing than a dual bound would be.
     ///
     /// Never saturates: a widened solve that came out below the base one has
@@ -742,7 +742,7 @@ pub fn measure_coverage(
     // (`quotes.rs`), and the widened solve below always runs at the resolution
     // this call was given. Subtracting a 256/50 widened output from a 4096/0
     // served one prices that resolution difference as coverage, with the sign
-    // that fires the guard — `the maintainers' research notes` §5.
+    // that fires the guard — see the unpublished allocator-monotonicity notes, §5.
     // Solving the served universe's own paths on the same allocator at the same
     // settings puts both sides of `V(U ∪ S) − V(U)` on one instrument, which is
     // the choice `measure_incumbents` already makes for the same reason.
@@ -1120,7 +1120,7 @@ fn shadow_id(universe: &RouteUniverse, excluded: Option<Address>) -> B256 {
 /// index requirement for. The bool reports whether the seed won, which is the
 /// signal the monotonicity guard used to print: once seeding makes a regression
 /// impossible, the fact that one WOULD have happened is the thing worth keeping
-/// (`the maintainers' research notes` §7 fix C names this as the
+/// (the unpublished allocator-monotonicity notes, §7 fix C, name this as the
 /// danger of landing C at all).
 #[allow(clippy::too_many_arguments)]
 fn solve_shadow_seeded(
@@ -1185,7 +1185,7 @@ fn solve_shadow(
 /// The one number this module produces that does not depend on the allocator.
 /// Everything else here is a difference of two heuristic solves, so it inherits
 /// the heuristic's error in both directions and states neither
-/// (`the maintainers' research notes` §1.3).
+/// (unpublished allocator-monotonicity notes, §1.3).
 ///
 /// §11 measured `graph_gap_bps` between 45,380 and 1.4×10⁹ bps and concluded a
 /// bound cannot answer the coverage question. That measurement belongs to a
@@ -1510,8 +1510,8 @@ mod tests {
     /// A connector that costs a second fee for nothing is certified worthless,
     /// by a dual rather than by two runs of the allocator.
     ///
-    /// This is the claim `the maintainers' research notes` §6.1 makes
-    /// against §11: scoped to the served universe plus the connectors being
+    /// This is the claim the unpublished allocator-monotonicity notes make
+    /// (§6.1) against §11: scoped to the served universe plus the connectors being
     /// asked about, and tightened over that scope, the bound is tight enough to
     /// answer. §11's 45,380–1.4×10⁹ bps belongs to the catalog-scope bound at
     /// the served quote's own dual.
