@@ -2,7 +2,7 @@
 //!
 //! Two fixtures. The first, eight dense single-hop UniV3 pools, is the one the
 //! rewrite was measured on; its keys (`route_ns`, `cert_ns`, …) and its
-//! `amount_out` stay as they were so `bench.sh` compares like with like. The
+//! `amount_out` stay as they were, so two revisions compare like with like. The
 //! second (`mh_*` keys) is shaped like a live multi-hop pair: see
 //! [`multihop`]. Both print their outputs, which later speed work must leave
 //! bit-identical.
@@ -188,9 +188,8 @@ fn main() -> anyhow::Result<()> {
         certificate.consistent
     );
     println!("route_cold_ns={route_cold_ns} cert_cold_ns={cert_cold_ns}");
-    // `ROUTE_PROFILE_MULTIHOP=0` skips the second fixture: the gates run this
-    // example in the dev profile, where it takes half a minute, and the
-    // example's own tests pin its outputs.
+    // `ROUTE_PROFILE_MULTIHOP=0` skips the second fixture, which takes half a
+    // minute in the dev profile; the example's own tests pin its outputs.
     if std::env::var("ROUTE_PROFILE_MULTIHOP").as_deref() != Ok("0") {
         println!("{}", multihop::profile()?);
     }
@@ -489,9 +488,9 @@ mod multihop {
 mod tests {
     use super::*;
 
-    /// The benchmark's own result, pinned. `gates.sh` checks the same amount
-    /// from the outside; this test keeps it inside `cargo test --examples`,
-    /// so a clone without the maintainers' tools still catches a change.
+    /// The benchmark's own result, pinned. CI checks the same amount from the
+    /// outside, in its release run; this test keeps it inside
+    /// `cargo test --examples`, so a plain test run catches a change too.
     #[test]
     fn the_benchmark_fixture_routes_to_the_pinned_output() {
         let (snapshot, token0, token1, amount) = fixture();
