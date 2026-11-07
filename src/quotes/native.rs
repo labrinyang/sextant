@@ -1,4 +1,5 @@
 use super::amm::fresh_amm_snapshot;
+use super::request::QuoteTerms;
 use super::wire::{HopJson, RouteLegJson, hop_json, venue};
 use crate::abi::addrhex;
 use crate::budget::SolverBudget;
@@ -397,4 +398,148 @@ pub(super) async fn request_optional_native_quote(
         Ok(result) => native_result_or_fallback(result),
         Err(_) => Err(NativeRfqError::QueueTimeout),
     }
+}
+
+/// What the Native stage found: the route it would ship, if any, and what the
+/// response reports about the attempt.
+pub(super) struct NativeOutcome {
+    pub(super) route: Option<NativeRoute>,
+    pub(super) attempted: bool,
+    pub(super) quoted: bool,
+    pub(super) rfq_ms: u64,
+    /// The AMM solves the stage ran: indicative drafts and a Native-first
+    /// suffix.
+    pub(super) solve_ms: u64,
+}
+
+/// The Native stage of a quote, after the AMM stage: draft the placements on
+/// the cached orderbook, request one firm quote for the best, and complete a
+/// Native-first route from the firm output.
+pub(super) async fn native_stage(
+    terms: &QuoteTerms,
+    native_rfq: Option<&dyn NativeRfqSource>,
+    profile: &'static ChainProfile,
+    native_last_prefix: Option<&Plan>,
+    stamped: &Stamped,
+    compute_slots: Option<&Arc<Semaphore>>,
+    budget: &SolverBudget,
+) -> anyhow::Result<NativeOutcome> {
+    let QuoteTerms {
+        a,
+        b,
+        identities,
+        amount_in,
+        slippage_bps,
+        deadline_seconds,
+        native_identity,
+        ..
+    } = *terms;
+    let recipient = identities.recipient;
+    // One cached orderbook observation prices every feasible placement. Only
+    // the best skeleton may consume a request-specific firm quote. The firm
+    // quote remains the last network input acquired so its TTL is not spent on
+    // the full AMM solve, certificate escalation, or coverage measurement.
+    budget.checkpoint("native RFQ request")?;
+    let native_context = match (native_rfq, recipient, native_identity, stamped.snap.settler) {
+        (Some(source), Some(beneficiary), Some(identity), Some(settler))
+            if beneficiary != Address::ZERO && slippage_bps > 0 =>
+        {
+            Some((source, beneficiary, identity, settler))
+        }
+        _ => None,
+    };
+    let rfq_attempted = native_context.is_some();
+    let rfq_started = Instant::now();
+    let (native_draft, native_indicative_solve_ms) = match native_context {
+        Some((source, _, identity, _)) => {
+            choose_native_draft(
+                source,
+                identity,
+                (a, b),
+                profile.stable,
+                amount_in,
+                native_last_prefix.cloned(),
+                stamped,
+                profile,
+                compute_slots,
+                budget,
+            )
+            .await?
+        }
+        None => (None, 0),
+    };
+    let mut solve_ms = native_indicative_solve_ms;
+    let native_quote = match (native_context, native_draft.as_ref()) {
+        (Some((source, beneficiary, identity, settler)), Some(draft)) => {
+            let (native_token_in, native_token_out, native_amount_in) =
+                draft.request_tokens_and_amount();
+            request_optional_native_quote(
+                source,
+                FirmQuoteRequest {
+                    identity,
+                    token_in: native_token_in,
+                    token_out: native_token_out,
+                    amount_in: native_amount_in,
+                    settler,
+                    beneficiary,
+                    tx_origin: identities.tx_origin,
+                    slippage_bps,
+                    expiry_seconds: deadline_seconds,
+                    chain_timestamp: stamped.chain_now(),
+                },
+                budget,
+            )
+            .await?
+        }
+        _ => None,
+    };
+    let rfq_ms = if rfq_attempted {
+        rfq_started.elapsed().as_millis() as u64
+    } else {
+        0
+    };
+    budget.checkpoint("native RFQ response")?;
+
+    let rfq_quoted = native_quote.is_some();
+    let native_route = match (native_draft, native_quote) {
+        (Some(NativeDraft::Only { .. }), Some(quote)) => Some(NativeRoute::Only { quote }),
+        (Some(NativeDraft::Last { prefix, .. }), Some(quote)) => {
+            Some(NativeRoute::Last { prefix, quote })
+        }
+        (Some(NativeDraft::First { bridge, .. }), Some(quote)) => {
+            // A Native-first suffix must be solved from the firm output, not an
+            // indicative orderbook amount. Re-enter the same bounded compute
+            // queue and keep the network wait outside that scarce region.
+            let (suffix, suffix_solve_ms) = solve_profile_stage_bounded(
+                stamped,
+                profile,
+                bridge,
+                b,
+                quote.amount_out(),
+                compute_slots,
+                budget,
+                "native suffix compute admission",
+            )
+            .await?;
+            solve_ms = solve_ms.saturating_add(suffix_solve_ms);
+            match suffix {
+                Some(suffix) => Some(NativeRoute::First { quote, suffix }),
+                None => {
+                    tracing::info!(
+                        "native rfq unavailable: firm output has no executable AMM suffix"
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    Ok(NativeOutcome {
+        route: native_route,
+        attempted: rfq_attempted,
+        quoted: rfq_quoted,
+        rfq_ms,
+        solve_ms,
+    })
 }

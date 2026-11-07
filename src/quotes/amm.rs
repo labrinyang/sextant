@@ -1,7 +1,9 @@
-use super::wire::{CertificateJson, RouteUniverseJson};
+use super::widen::{WideningReport, widen};
+use super::wire::{CertificateJson, RouteUniverseJson, certificate_json};
 use crate::budget::SolverBudget;
 use crate::certificate;
 use crate::certificate::{Certificate, certify_in_universe_with_budget};
+use crate::chain::ChainProfile;
 use crate::engine::Stamped;
 use crate::route::{ALLOC_CHUNKS, MIN_SHARE_BPS, Plan, PreparedRoutes};
 use crate::rpc::RpcUnavailable;
@@ -107,53 +109,6 @@ pub(super) struct AmmEvaluation {
     pub(super) widening: WideningReport,
 }
 
-/// A resident candidate is admitted when its probes say it could add at least
-/// this share of the quote (`resident::Widening::worth_admitting`): 0.1 bp, in
-/// bp × 10⁴.
-pub(super) const WIDEN_BPS_E4: u64 = 1_000;
-
-/// Probing and re-solving rounds a resident quote may take after its first
-/// solve.
-pub(super) const WIDEN_ROUNDS: usize = 3;
-
-/// What a resident quote admitted beyond the graph it started from.
-#[derive(Clone, Debug)]
-pub(super) struct WideningReport {
-    /// Why it stopped: `settled` (no candidate's probes say it could add
-    /// enough), `no_gain` (a wider solve found nothing more), `rounds` (the
-    /// round limit came first, so this is not known), `stopped` (a probe or
-    /// graph could not be built) or `none` (no candidates).
-    pub(super) end: &'static str,
-    /// Connectors beyond the static ones this pair's resident graph may use.
-    pub(super) candidates: usize,
-    /// Connectors admitted on their probes, in the order admitted.
-    pub(super) admitted: Vec<Address>,
-    /// Probing and re-solving rounds after the first solve.
-    pub(super) rounds: usize,
-    /// Wall time of the probes, in microseconds.
-    pub(super) probe_us: u64,
-    /// Admitted skeletons the pair ceiling left out of the served graph.
-    pub(super) left_out: usize,
-    /// Thin pools the served graph left out, and whether it kept them.
-    pub(super) thin_left_out: usize,
-    pub(super) thin_kept: bool,
-}
-
-impl Default for WideningReport {
-    fn default() -> Self {
-        Self {
-            end: "none",
-            candidates: 0,
-            admitted: Vec::new(),
-            rounds: 0,
-            probe_us: 0,
-            left_out: 0,
-            thin_left_out: 0,
-            thin_kept: false,
-        }
-    }
-}
-
 /// One graph's solve and, when certificates are on, its certificate.
 pub(super) struct Round {
     pub(super) plan: Option<Plan>,
@@ -249,4 +204,165 @@ pub(super) fn fresh_amm_snapshot(stamped: &Stamped) -> anyhow::Result<&Snapshot>
                 .context(RpcUnavailable("snapshot freshness")),
         )
     }
+}
+
+/// The AMM stage of a quote: solve the pair, widen a resident graph, certify
+/// the plan that ships, solve the 1% probe for the fair reference, and measure
+/// coverage. CPU work only; the caller decides whether it runs in place or on
+/// a blocking thread.
+pub(super) fn evaluate_amm(
+    stamped: &Stamped,
+    profile: &'static ChainProfile,
+    (a, b): (Address, Address),
+    amount_in: U256,
+    native_planning_enabled: bool,
+    budget: &SolverBudget,
+) -> anyhow::Result<AmmEvaluation> {
+    budget.checkpoint("quote solve")?;
+    let canonical_hash = stamped
+        .block_id()
+        .as_block_hash()
+        .context("snapshot is not pinned to a canonical block hash")?;
+    let mut universe = stamped.universe.orient(a, b)?;
+    let (mut round, first_routes) = solve_round(&stamped.snap, &universe, amount_in, budget)?;
+    let mut solve_ms = round.solve_ms;
+
+    let (widening, graph) = widen(
+        stamped,
+        (a, b),
+        amount_in,
+        budget,
+        &mut universe,
+        &mut round,
+        &mut solve_ms,
+    )?;
+    let snap = graph
+        .as_ref()
+        .map_or(&stamped.snap, |graph| &graph.snapshot);
+    // The shipped round's route set, for the escalation and the fair probe:
+    // the first round's when no wider graph shipped (the universe changes
+    // only with the graph), else one build over the graph that did.
+    let routes = match &graph {
+        None => first_routes,
+        Some(graph) => {
+            PreparedRoutes::for_universe_with_budget(&graph.snapshot, &universe, budget.clone())?
+        }
+    };
+    let screening = &stamped.screening;
+    // Only the plan that ships is certified.
+    certify_round(
+        &mut round,
+        &routes,
+        snap,
+        screening,
+        &universe,
+        (a, b),
+        amount_in,
+        budget,
+    )?;
+    let certificate_us = round.certificate_us;
+    let universe_diag = universe.diagnostics();
+    let route_universe = RouteUniverseJson::new(
+        profile.chain_id,
+        snap.block,
+        canonical_hash,
+        universe_diag,
+        stamped.topology_fences,
+    );
+
+    let t = Instant::now();
+    let native_last_prefix = if native_planning_enabled
+        && a != profile.stable
+        && b != profile.stable
+    {
+        PreparedRoutes::for_profile_with_budget(snap, profile, a, profile.stable, budget.clone())?
+            .try_solve_single_quantized(amount_in, *ALLOC_CHUNKS)?
+    } else {
+        None
+    };
+    let fair_in = amount_in / U256::from(100);
+    // one probe, two derived numbers: the size penalty this API has always
+    // reported, and the fee-free baseline the UI prices every route against
+    let fair = if round.plan.is_none() || fair_in.is_zero() {
+        None
+    } else {
+        routes.try_solve_quantized(fair_in, *ALLOC_CHUNKS, *MIN_SHARE_BPS)?
+    };
+    solve_ms = solve_ms.saturating_add(t.elapsed().as_millis() as u64);
+    let Round {
+        plan, certificate, ..
+    } = round;
+    // Captured before `certificate_json` consumes the result: it is the
+    // upper bound on what evicting an idle connector can cost (docs §22).
+    let certified_gap_bps_e4: Option<U256> = certificate
+        .as_ref()
+        .and_then(|result| result.as_ref().ok())
+        .map(|cert| cert.gap_bps_e4);
+    let certificate = certificate.map(|result| certificate_json(result, *ESCALATE_BPS_E4 > 0));
+
+    // Coverage, measured. `plan` is final here — after any escalation — so
+    // both sides of `V(U ∪ screened) − V(U)` come from the same allocator
+    // settings at the same block.
+    //
+    // Gated on screening having loaded state rather than on a flag of its
+    // own: those reads are the expensive part and they are already paid for.
+    // A failure here degrades to "unmeasured" and never touches the quote,
+    // matching how the screening reads themselves degrade — the counterfactual
+    // budget-checkpoints, so an exhausted budget stops it almost immediately
+    // instead of spending past the deadline.
+    //
+    // `coverage` rather than `measure_coverage`: the measurement is amortized
+    // over the topology lease, so most quotes read a verdict instead of
+    // paying 112–721 ms to reproduce one.
+    let t = Instant::now();
+    // No certified gap means no bound on an eviction's cost, so admission
+    // gets no evidence rather than an unbacked zero.
+    let coverage = if let (Some(plan), Some(certified_gap_bps_e4)) =
+        (plan.as_ref(), certified_gap_bps_e4)
+        && !screening.is_empty()
+    {
+        match crate::counterfactual::coverage(
+            snap,
+            &universe,
+            screening,
+            plan,
+            certified_gap_bps_e4,
+            plan.amount_out,
+            amount_in,
+            *ALLOC_CHUNKS,
+            *MIN_SHARE_BPS,
+            budget,
+        ) {
+            // `Ok(None)` is the module declining to answer: nothing screened
+            // it could reach, no reproducible route, or a non-monotone
+            // solve. It stays absent rather than collapsing into a zero,
+            // because a zero here is a proof that no connector helps.
+            Ok(value) => value,
+            Err(error) => {
+                tracing::info!(
+                    "coverage unmeasured: {}",
+                    crate::rpc::sanitized_error(&error)
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let coverage_us = t.elapsed().as_micros() as u64;
+    Ok(AmmEvaluation {
+        route_universe,
+        universe_diag,
+        plan,
+        native_last_prefix,
+        fair,
+        fair_in,
+        certificate,
+        coverage,
+        solve_ms,
+        certificate_us,
+        coverage_us,
+        widened: graph.map(|graph| stamped.widened(graph)),
+        widening,
+    })
 }

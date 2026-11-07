@@ -13,18 +13,17 @@ use super::{PricedBeforeCheck, quote_swap_bounded};
 use crate::abi::addrhex;
 use crate::budget::SolverBudget;
 use crate::certificate::certify;
-use crate::chain::NATIVE;
 use crate::chain::{
     BSC_NATIVE_RFQ, BSC_PROFILE, BSC_USD1, BSC_USDT, ChainProfile, FIXTURE_NATIVE_RFQ,
-    FIXTURE_PROFILE, FIXTURE_USDT0, FIXTURE_WETH, WBNB,
+    FIXTURE_PROFILE, FIXTURE_USDT0, FIXTURE_WETH, NATIVE, WBNB,
 };
 use crate::config::Config;
 use crate::engine::Engine;
 use crate::pools::{AlgebraMeta, V2Pool, V2Protocol, V2State, V3Pool, V3Protocol, V3State, sim_v2};
 use crate::rfq::{
-    FirmQuoteRequest, NativePair, NativeRfqError, NativeRfqSource, ValidatedFirmQuote,
+    FirmQuoteRequest, NativeBeneficiaryAuthorizer, NativePair, NativeRfqConfig, NativeRfqError,
+    NativeRfqSource, ValidatedFirmQuote,
 };
-use crate::rfq::{NativeBeneficiaryAuthorizer, NativeRfqConfig};
 use crate::route::{
     ALLOC_CHUNKS, Hop, HopKind, Leg, Plan, PreparedRoutes, best_plan, quantized_plan,
 };
@@ -36,12 +35,10 @@ use crate::state::ObservedSnapshot;
 use crate::universe::RouteUniverseDiagnostics;
 use crate::{certificate, simulation};
 use alloy::eips::BlockId;
-use alloy_primitives::Bytes;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, Bytes, U256};
 use futures_util::future::BoxFuture;
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 

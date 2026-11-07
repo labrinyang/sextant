@@ -2,12 +2,16 @@ use super::fees::PPM_BASE;
 use crate::abi::addrhex;
 use crate::certificate;
 use crate::certificate::format_bps_e4;
-use crate::route::{Hop, HopKind};
+use crate::counterfactual::CoverageReading;
+use crate::route::{Hop, HopKind, Leg};
+use crate::settler::BPS_BASE;
 use crate::simulation::{Approval, Issues, Simulation};
 use crate::snapshot::Snapshot;
 use crate::topology::CatalogFences;
 use crate::universe::RouteUniverseDiagnostics;
+use crate::v3math::muldiv;
 use alloy_primitives::{Address, B256, U256};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -771,5 +775,65 @@ pub(super) fn hop_json(snap: &Snapshot, h: &Hop) -> anyhow::Result<HopJson> {
                 tick_spacing: p.pool_type.tick_spacing(),
             }
         }
+    })
+}
+
+impl CoverageJson {
+    /// A coverage reading in wire form.
+    pub(super) fn new(reading: &CoverageReading) -> Self {
+        CoverageJson {
+            gain_bps: format_bps_e4(reading.value.gain_bps_e4),
+            gain_wei: reading.value.total_gain.to_string(),
+            widened_wei: reading.value.widened_out.to_string(),
+            regret_bound_bps: reading.value.regret_bound_bps_e4.map(format_bps_e4),
+            widened_gap_bps: reading.value.widened_gap_bps_e4.map(format_bps_e4),
+            widened_bound_wei: reading.value.widened_bound.map(|bound| bound.to_string()),
+            measured_in_wei: reading.measured_in.to_string(),
+            age_ms: reading.age.as_millis() as u64,
+            used: reading
+                .value
+                .marginals
+                .iter()
+                .map(|marginal| ConnectorMarginalJson {
+                    token: addrhex(marginal.connector),
+                    marginal_bps: format_bps_e4(marginal.marginal_bps_e4),
+                    marginal_wei: marginal.marginal_out.to_string(),
+                })
+                .collect(),
+            incumbents: reading
+                .value
+                .incumbents
+                .iter()
+                .map(|loss| ConnectorMarginalJson {
+                    token: addrhex(loss.connector),
+                    marginal_bps: format_bps_e4(loss.marginal_bps_e4),
+                    marginal_wei: loss.marginal_out.to_string(),
+                })
+                .collect(),
+            idle: reading.value.idle.iter().copied().map(addrhex).collect(),
+            loss_bound_bps: format_bps_e4(reading.value.loss_bound_bps_e4),
+            solves: reading.value.solves,
+            base_seeded: reading.value.base_seeded,
+            widened_seeded: reading.value.widened_seeded,
+        }
+    }
+}
+
+/// One AMM leg in wire form: its share of the input, its amounts and its hops.
+pub(super) fn leg_json(
+    snap: &Snapshot,
+    leg: &Leg,
+    amount_in: U256,
+) -> anyhow::Result<RouteLegJson> {
+    Ok(RouteLegJson {
+        share_bps: u32::try_from(muldiv(leg.amount_in, U256::from(BPS_BASE), amount_in)?)
+            .context("share bps out of range")?,
+        amount_in: leg.amount_in.to_string(),
+        amount_out: leg.amount_out.to_string(),
+        hops: leg
+            .path
+            .iter()
+            .map(|h| hop_json(snap, h))
+            .collect::<anyhow::Result<_>>()?,
     })
 }
