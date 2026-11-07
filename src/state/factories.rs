@@ -1,4 +1,21 @@
-use super::*;
+use super::indexed_validation::{
+    IndexedTopologyProbe, IndexedValidationPlan, finish_indexed_validation, indexed_probe_address,
+    indexed_probe_spacing,
+};
+use super::sorted_pair;
+use crate::abi::{IUniV2Factory, IUniV3Factory};
+use crate::catalog::{CandidateSource, CatalogVenue, IndexedEvmDiscovery};
+use crate::chain::ChainProfile;
+use crate::pools::{V2Pool, V3Pool};
+use crate::rpc::{CanonicalBlock, Rpc};
+use crate::topology::{AddressPoolTopology, Protocol as IndexedProtocol};
+use crate::universe::RouteUniverse;
+use alloy::eips::BlockId;
+use alloy_primitives::Address;
+use alloy_primitives::aliases::U24;
+use alloy_sol_types::SolCall;
+use anyhow::{Context, ensure};
+use std::collections::HashSet;
 
 /// One factory question: a V2 venue's `getPair`, or a V3 venue's `getPool`
 /// at one of its fee tiers, for one pair.

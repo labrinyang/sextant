@@ -1,4 +1,9 @@
-use super::*;
+use crate::abi::IExtsload;
+use crate::chain::{V4_DYNAMIC_FEE_FLAG, V4_POOLS_SLOT};
+use crate::pools::{V3Pool, V4Meta};
+use alloy_primitives::{Address, B256, U256, keccak256};
+use alloy_sol_types::SolCall;
+use anyhow::Context;
 
 /// CREATE2 pool address for Settler-supported V3 forks — byte-identical to the
 /// derivation the Settler's UNISWAPV3 action performs before calling the pool.

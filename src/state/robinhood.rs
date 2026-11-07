@@ -22,7 +22,43 @@
 //! chain's height.) Pinned replays (differential testing) bypass the topology
 //! cache: a head-discovered pool set may not exist at an old block.
 
-use super::*;
+use super::algebra::attach_algebra_fees;
+use super::cache::{Topology, TopologyStatus, cache_topology, topology_cached, topology_key};
+use super::execution::verify_execution_adapter_at;
+use super::lens_parse::parse_lens;
+use super::pool_ids::{algebra_pool_addr, clone_pool_addr, extsload, v4_meta};
+use super::settings::{TOPO_TTL, bitmap_words};
+use super::v4_keys::{
+    V4KeyDiscovery, V4ScanContext, V4ScanSource, logs_rpc, v4_currency_pair_for, v4_event_keys,
+    v4_tokens_from_currencies_for,
+};
+use super::{ObservedSnapshot, Probe, globalStateCall, sorted_pair};
+use crate::abi::{
+    IArbSys, IPoolState, IUniV2Factory, IUniV3Factory, IUp33ClFactory, IUp33V2Factory, addrhex,
+    read_word, word_address,
+};
+use crate::chain::{
+    ARBSYS, CLONE_FEE_TIERS, ChainProfile, DiscoveryProfile, FORK_GIGADEX, FORK_PANCAKE,
+    FORK_ROBINSWAP, FORK_SHERIFF, FORK_SUSHI, FORK_SWAPHOOD, FORK_UNIV3, FORK_UP33,
+    GIGADEX_V3_DEPLOYER, GIGADEX_V3_FEE_TIERS, GIGADEX_V3_INIT, PANCAKE_V3_DEPLOYER,
+    PANCAKE_V3_INIT, ROBINSWAP_V3_DEPLOYER, ROBINSWAP_V3_FEE_TIERS, ROBINSWAP_V3_INIT,
+    SHERIFF_DEPLOYER, SHERIFF_INIT, SUSHI_V3_DEPLOYER, SUSHI_V3_FEE_TIERS, SUSHI_V3_INIT,
+    SWAPHOOD_V3_DEPLOYER, SWAPHOOD_V3_INIT, SettlerRuntimePolicy, UNIV2_FACTORY, UNIV2_FEE_BPS,
+    UNIV3_FACTORY, UNIV3_FEE_TIERS, UP33_CL_FACTORY, UP33_V2_FACTORY, V4_KEYS, V4_POOL_MANAGER,
+    univ3_tier_spacing,
+};
+use crate::pools::{V2Pool, V2Protocol, V3ExecutionMeta, V3Pool, V3Protocol};
+use crate::rpc::Rpc;
+use crate::universe::RouteUniverse;
+use alloy::eips::BlockId;
+use alloy_primitives::aliases::U24;
+use alloy_primitives::{Address, B256};
+use alloy_sol_types::SolCall;
+use anyhow::{Context, ensure};
+use futures_util::{StreamExt, TryStreamExt, stream};
+use sextant_amm::snapshot::Snapshot;
+use std::time::Instant;
+use tokio::sync::OnceCell;
 
 pub(super) fn requires_verified_settler(protocol: V3Protocol) -> bool {
     matches!(

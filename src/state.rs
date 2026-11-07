@@ -4,53 +4,21 @@
 // indexed_validation and factories). The shared parts are in lens_parse, algebra,
 // cache, v4_keys, pool_ids, execution and settings; the unit tests are in tests.
 
-use crate::abi::{IArbSys, IExtsload, ISettlerRegistry};
-use crate::abi::{
-    IPoolState, IUniV2Factory, IUniV3Factory, IUp33ClFactory, IUp33V2Factory, addrhex, hexbytes,
-    read_word, untwos, word_address, word_i64,
-};
-use crate::catalog::{CandidateSource, CatalogVenue, IndexedEvmDiscovery};
-use crate::chain::{
-    ARBSYS, CLONE_FEE_TIERS, ChainProfile, DiscoveryProfile, FORK_GIGADEX, FORK_PANCAKE,
-    FORK_ROBINSWAP, FORK_SHERIFF, FORK_SUSHI, FORK_SWAPHOOD, FORK_UNIV3, FORK_UP33,
-    GIGADEX_V3_DEPLOYER, GIGADEX_V3_FEE_TIERS, GIGADEX_V3_INIT, PANCAKE_V3_DEPLOYER,
-    PANCAKE_V3_INIT, ROBINSWAP_V3_DEPLOYER, ROBINSWAP_V3_FEE_TIERS, ROBINSWAP_V3_INIT,
-    SHERIFF_DEPLOYER, SHERIFF_INIT, SUSHI_V3_DEPLOYER, SUSHI_V3_FEE_TIERS, SUSHI_V3_INIT,
-    SWAPHOOD_V3_DEPLOYER, SWAPHOOD_V3_INIT, SettlerRuntimePolicy, UNIV2_FACTORY, UNIV2_FEE_BPS,
-    UNIV3_FACTORY, UNIV3_FEE_TIERS, UP33_CL_FACTORY, UP33_V2_FACTORY, V4_DYNAMIC_FEE_FLAG,
-    V4_INIT_TOPIC, V4_KEYS, V4_MAX_FEE_PPM, V4_POOL_MANAGER, V4_POOLS_SLOT, V4_SWAP_HOOK_FLAGS,
-    univ3_tier_spacing,
-};
-#[cfg(test)]
-use crate::chain::{NATIVE, ROBINHOOD_PROFILE, WETH};
+use crate::catalog::CandidateSource;
+use crate::chain::{ChainProfile, DiscoveryProfile};
 use crate::indexer::IndexerClient;
-use crate::pools::{
-    AlgebraMeta, TickInfo, V2Pool, V2Protocol, V2State, V3ExecutionMeta, V3Pool, V3Protocol,
-    V3State, V4Meta,
-};
-use crate::route::BASELINE_PATH_CANDIDATE_CAP;
-use crate::rpc::{CanonicalBlock, Rpc, RpcUnavailable, sanitized_error};
-use crate::topology::{
-    AddressPoolTopology, CatalogFences, ConnectorSelection, PoolTopology as IndexedPoolTopology,
-    Protocol as IndexedProtocol, TokenPair, Topology as IndexedTopology, V4PoolTopology,
-};
-use crate::universe::{FallbackKind, RouteUniverse, RouteUniverseSource};
-use crate::v3math::{MAX_TICK, MIN_TICK, sqrt_limit};
+use crate::pools::{V2Protocol, V3Protocol};
+use crate::rpc::Rpc;
+use crate::topology::CatalogFences;
+use crate::universe::RouteUniverse;
 use alloy::eips::BlockId;
-use alloy_primitives::{
-    Address, B256, Bytes, I256, U256,
-    aliases::{U24, U160},
-    keccak256,
-};
-use alloy_sol_types::{SolCall, sol};
+use alloy_primitives::Address;
+use alloy_sol_types::sol;
 use anyhow::{Context, ensure};
-use futures_util::{StreamExt, TryStreamExt, stream};
 pub use sextant_amm::snapshot::{ScreeningPools, Snapshot};
-use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
-use std::time::{Duration, Instant};
-use tokio::sync::{Mutex as AsyncMutex, OnceCell};
+use std::sync::Arc;
+use std::time::Instant;
 
 /// The upstream catalog and canonical RPC disagree about immutable identity or
 /// block binding. This is an operator/upstream failure (HTTP 502), never a bad
@@ -80,7 +48,7 @@ impl std::error::Error for UpstreamIntegrityError {}
 macro_rules! ensure_integrity {
     ($condition:expr, $($arg:tt)*) => {
         if !$condition {
-            return Err(UpstreamIntegrityError::new(format!($($arg)*)).into());
+            return Err($crate::state::UpstreamIntegrityError::new(format!($($arg)*)).into());
         }
     };
 }
@@ -97,16 +65,12 @@ mod pool_ids;
 mod robinhood;
 mod settings;
 mod v4_keys;
-use algebra::*;
-use cache::*;
-use connectors::*;
 pub use execution::*;
 pub(crate) use factories::*;
 pub(crate) use indexed::*;
-use indexed_validation::*;
 pub(crate) use lens_parse::*;
 pub use pool_ids::*;
-use robinhood::*;
+use robinhood::snapshot_at_observed_profile;
 pub(crate) use settings::*;
 pub(crate) use v4_keys::*;
 

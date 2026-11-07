@@ -1,4 +1,15 @@
-use super::*;
+use super::beforeSwapCall;
+use super::lens_parse::{ParsedLens, SheriffBinding};
+use crate::abi::read_word;
+use crate::pools::AlgebraMeta;
+use crate::rpc::Rpc;
+use crate::v3math::sqrt_limit;
+use alloy::eips::BlockId;
+use alloy_primitives::aliases::U160;
+use alloy_primitives::{Address, B256, Bytes, I256};
+use alloy_sol_types::SolCall;
+use anyhow::{Context, ensure};
+use sextant_amm::snapshot::Snapshot;
 
 // The directional snapshot model is valid for Sheriff's SlidingFee plugin,
 // whose result is amount-independent. Unknown Algebra plugins fail closed.

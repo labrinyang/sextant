@@ -1,9 +1,10 @@
 //! Venue ids: the protocol id every wire already carries (`univ2`,
 //! `pancakev3`, `sushiv3`, ...). A venue is data: a chain's manifest names its
-//! venues and each one's pool family. What a venue *does* is decided by its
-//! family and its deployment (factory, fee, Settler fork), never by its id,
-//! except for the few legacy ids whose pools carry their own state shape
-//! (`UP33V2`, `UP33CL`, `SHERIFF`, `UNIV4`).
+//! venues and each one's pool family. The code a venue's pools run (swap
+//! math, fee model, state shape) is the [`Core`] its id carries, and code that
+//! depends on it asks the core rather than comparing ids. The id itself stands
+//! for deployment facts: the factory, fees and Settler fork a chain lists
+//! under it.
 //!
 //! Each id has a small rank, stable within a process: the ids compiled here
 //! keep the ranks the solver has always used, and an id a manifest adds is

@@ -1,4 +1,8 @@
-use super::*;
+use crate::catalog::CandidateSource;
+use crate::chain::ChainProfile;
+use alloy_primitives::U256;
+use anyhow::{Context, ensure};
+use std::sync::LazyLock;
 
 /// Snapshot word-window half-width (SOLVER_BITMAP_WORDS, default 16): each
 /// pool's tick coverage is ±words·256·spacing around the current tick.

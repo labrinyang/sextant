@@ -9,11 +9,80 @@ fn legs_over_cap() -> u32 {
     n
 }
 
-use super::*;
-use alloy_primitives::address;
+use super::algebra::{
+    SHERIFF_PLUGIN_CONFIG, SHERIFF_SLIDING_FEE_PLUGIN, SHERIFF_SLIDING_FEE_PLUGIN_CODEHASH,
+    attach_algebra_fees, before_swap_call, decode_before_swap_fee, validate_sheriff_binding,
+};
+use super::cache::{
+    TOPO_CACHE, Topology, TopologyStatus, cache_topology, topology_cached, topology_key,
+};
+use super::connectors::{
+    admit_dynamic_work, admit_indexed_topology_work, augmented_availability_fallback,
+    indexed_topology_pool_counts, retain_allowlisted,
+};
+use super::execution::settler_registry_call;
+use super::factories::{FactoryDiscoveryPlan, finish_factory_discovery, plan_factory_discovery};
+use super::indexed_validation::{
+    finish_indexed_validation, indexed_probe_spacing, indexed_route_pairs,
+    indexed_topology_query_pairs, plan_indexed_validation,
+};
+use super::lens_parse::{ParsedLens, SheriffBinding, parse_indexed_lens, parse_lens};
+use super::pool_ids::{
+    algebra_pool_addr, clone_pool_addr, extsload, v4_hook_flags, v4_meta, v4_pool_id, v4_swap_fee,
+};
+use super::robinhood::{
+    ensure_complete_probes, finish_robinhood_discovery, plan_robinhood_probes,
+    requires_verified_settler, settler_supports_protocol_for,
+};
+use super::settings::{
+    BITMAP_WORDS, CONNECTOR_SCREENING, DYNAMIC_CONNECTORS, DynamicConnectorMode, RANKED_CONNECTORS,
+    admission_setting_admitted, bitmap_words, connector_mode_admitted, parse_connector_screening,
+    ranked_setting_admitted, read_connector_min_bps_e4, screening_has_a_reader,
+    screening_setting_admitted,
+};
+use super::v4_keys::{
+    V4_KEYS_PER_PAIR_CAP, V4_REORG_OVERLAP, V4_UNKNOWN_KEY_FEE_PPM, V4KeyDiscovery, V4ScanContext,
+    V4ScanSource, ensure_v4_key_capacity, v4_currency_pair_for, v4_event_keys, v4_key_gate,
+    v4_parse_key, v4_refresh_from, v4_scan_covers_primary, v4_tokens_from_currencies_for,
+};
+use super::{
+    Probe, UpstreamIntegrityError, beforeSwapCall, globalStateCall, snapshot_at_for,
+    snapshot_at_observed_for, sorted_pair,
+};
+use crate::abi::{
+    IArbSys, IPoolState, ISettlerRegistry, IUniV2Factory, IUniV3Factory, IUp33ClFactory,
+    IUp33V2Factory,
+};
+use crate::catalog::CandidateSource;
+use crate::chain::{
+    ARBSYS, DiscoveryProfile, FORK_GIGADEX, FORK_PANCAKE, FORK_ROBINSWAP, FORK_SHERIFF, FORK_SUSHI,
+    FORK_SWAPHOOD, FORK_UNIV3, FORK_UP33, GIGADEX_V3_DEPLOYER, GIGADEX_V3_INIT, NATIVE,
+    PANCAKE_V3_DEPLOYER, PANCAKE_V3_INIT, ROBINHOOD_PROFILE, ROBINSWAP_V3_DEPLOYER,
+    ROBINSWAP_V3_INIT, SHERIFF_DEPLOYER, SHERIFF_INIT, SUSHI_V3_DEPLOYER, SUSHI_V3_INIT,
+    SWAPHOOD_V3_DEPLOYER, SWAPHOOD_V3_INIT, SettlerRuntimePolicy, UNIV2_FACTORY, UNIV3_FACTORY,
+    UP33_CL_FACTORY, UP33_V2_FACTORY, V4_DYNAMIC_FEE_FLAG, V4_MAX_FEE_PPM, V4_POOL_MANAGER, WETH,
+};
+use crate::indexer::IndexerClient;
+use crate::pools::{TickInfo, V2Pool, V2Protocol, V3ExecutionMeta, V3Pool, V3Protocol, V3State};
+use crate::route::BASELINE_PATH_CANDIDATE_CAP;
+use crate::rpc::{Rpc, RpcUnavailable};
+use crate::topology::{
+    AddressPoolTopology, CatalogFences, ConnectorSelection, PoolTopology as IndexedPoolTopology,
+    Protocol as IndexedProtocol, TokenPair, Topology as IndexedTopology, V4PoolTopology,
+};
+use crate::universe::{FallbackKind, RouteUniverse, RouteUniverseSource};
+use crate::v3math::{MAX_TICK, MIN_TICK};
+use alloy::eips::BlockId;
+use alloy_primitives::aliases::U24;
+use alloy_primitives::{Address, B256, I256, U256, address};
+use alloy_sol_types::SolCall;
 use axum::{Json, Router, extract::State, routing::post};
 use serde_json::{Value, json};
+use sextant_amm::snapshot::Snapshot;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
+use tokio::sync::OnceCell;
 
 fn signed_word(v: i64) -> U256 {
     I256::try_from(v).expect("fits I256").into_raw()

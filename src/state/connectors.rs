@@ -1,4 +1,28 @@
-use super::*;
+use super::indexed_validation::{
+    finish_indexed_validation, indexed_route_pairs, indexed_topology_query_pairs,
+    indexed_v4_quote_candidate, plan_indexed_validation,
+};
+use super::settings::{
+    CONNECTOR_ADMISSION, CONNECTOR_MIN_BPS_E4, CONNECTOR_SCREENING, DYNAMIC_CONNECTORS,
+    DynamicConnectorMode,
+};
+use super::sorted_pair;
+use super::v4_keys::v4_tokens_from_currencies_for;
+use crate::catalog::IndexedEvmDiscovery;
+use crate::chain::ChainProfile;
+use crate::indexer::IndexerClient;
+use crate::pools::{V2Pool, V3Pool};
+use crate::route::BASELINE_PATH_CANDIDATE_CAP;
+use crate::rpc::{CanonicalBlock, Rpc, RpcUnavailable};
+use crate::topology::{
+    CatalogFences, ConnectorSelection, PoolTopology as IndexedPoolTopology,
+    Topology as IndexedTopology,
+};
+use crate::universe::{FallbackKind, RouteUniverse, RouteUniverseSource};
+use alloy::eips::BlockId;
+use alloy_primitives::Address;
+use anyhow::{Context, ensure};
+use std::collections::{HashMap, HashSet};
 
 async fn prepare_indexed_topology(
     profile: &ChainProfile,

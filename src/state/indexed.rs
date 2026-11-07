@@ -1,4 +1,35 @@
-use super::*;
+use super::ObservedSnapshot;
+use super::cache::{
+    Topology, TopologyStatus, cache_topology, listed_topology_key, topology_cached, topology_key,
+};
+use super::connectors::{discover_indexed, indexed_route_universe};
+use super::execution::{SettlerUnavailable, verify_execution_adapter_at};
+use super::factories::discover_by_factories;
+use super::indexed_validation::{
+    finish_indexed_validation, indexed_probe_spacing, indexed_query_pairs_of,
+    plan_indexed_validation,
+};
+use super::lens_parse::parse_indexed_lens;
+use super::settings::{TOPO_TTL, bitmap_words};
+use crate::abi::IUniV3Factory;
+use crate::catalog::{CatalogVenue, IndexedEvmDiscovery};
+use crate::chain::ChainProfile;
+use crate::indexer::IndexerClient;
+use crate::pools::{V2Pool, V3Pool};
+use crate::rpc::{CanonicalBlock, Rpc, sanitized_error};
+use crate::topology::{
+    AddressPoolTopology, CatalogFences, PoolTopology as IndexedPoolTopology,
+    Protocol as IndexedProtocol, Topology as IndexedTopology,
+};
+use crate::universe::RouteUniverse;
+use alloy::eips::BlockId;
+use alloy_primitives::Address;
+use alloy_primitives::aliases::U24;
+use alloy_sol_types::SolCall;
+use anyhow::ensure;
+use sextant_amm::snapshot::ScreeningPools;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 /// What optional graph expansion may add to a snapshot pull.
 ///

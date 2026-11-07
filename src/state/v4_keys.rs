@@ -1,4 +1,16 @@
-use super::*;
+use super::pool_ids::v4_hook_flags;
+use super::sorted_pair;
+use crate::abi::{addrhex, hexbytes, read_word, word_address, word_i64};
+use crate::chain::{
+    V4_DYNAMIC_FEE_FLAG, V4_INIT_TOPIC, V4_MAX_FEE_PPM, V4_POOL_MANAGER, V4_SWAP_HOOK_FLAGS,
+};
+use crate::rpc::{Rpc, sanitized_error};
+use alloy_primitives::Address;
+use anyhow::{Context, ensure};
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::time::Instant;
+use tokio::sync::{Mutex as AsyncMutex, OnceCell};
 
 const V4_KEY_CACHE_CAP: usize = 4_096;
 /// Internal placeholder carried only from indexed topology into the Lens.
