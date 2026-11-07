@@ -10,6 +10,8 @@ publish.workspace = true
 [features]
 # Constructors for dependents' tests.
 testing = ["sextant-chain/fixtures"]
+# The quota authority and its HTTP routes, for the host that serves them.
+authority = ["dep:axum"]
 
 [dependencies]
 sextant-chain = { path = "../chain" }
@@ -21,12 +23,14 @@ alloy-sol-types.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-axum = "0.8.9"
+axum = { version = "0.8.9", optional = true }
 futures-util = "0.3"
 reqwest.workspace = true
 tokio = { version = "1.53.0", features = ["full"] }
 zeroize = "1.9"
 
 [dev-dependencies]
+# The coordinator tests serve the authority and stub its routes.
+axum = "0.8.9"
 sextant-chain = { path = "../chain", features = ["fixtures"] }
 tokio = { version = "1.53.0", features = ["full", "test-util"] }

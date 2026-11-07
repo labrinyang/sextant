@@ -1,3 +1,9 @@
+//! The quota authority: one solver host admits every host's Native firm
+//! quotes against the provider's shared ceilings, and serves that over HTTP.
+//! It is compiled with rfq's `authority` feature, which the solver enables;
+//! the client in the parent module, and Settler encoding through it, need
+//! neither the authority nor an HTTP server.
+
 use super::{Acquire, Granted, MAX_BODY, MAX_LEASES, Release, Released};
 use alloy_primitives::B256;
 use axum::extract::State;

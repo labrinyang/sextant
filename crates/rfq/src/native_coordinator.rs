@@ -4,19 +4,21 @@
 use alloy_primitives::B256;
 #[cfg(test)]
 use axum::http::HeaderMap;
-use axum::http::StatusCode;
 #[cfg(test)]
 use axum::routing::post;
 #[cfg(test)]
 use axum::{Json, Router};
-use reqwest::Url;
+use reqwest::{StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+// Compiled only where a host serves the authority (the `authority` feature).
+#[cfg(any(test, feature = "authority"))]
 mod authority;
+#[cfg(any(test, feature = "authority"))]
 pub use authority::*;
 
 const MAX_BODY: usize = 4096;

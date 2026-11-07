@@ -59,7 +59,7 @@ sextant-chain = { path = "crates/chain" }
 sextant-budget = { path = "crates/budget" }
 sextant-route = { path = "crates/route" }
 sextant-io = { path = "crates/io" }
-sextant-rfq = { path = "crates/rfq" }
+sextant-rfq = { path = "crates/rfq", features = ["authority"] }
 sextant-discovery = { path = "crates/discovery" }
 sextant-market = { path = "crates/market" }
 sextant-exec = { path = "crates/exec" }
