@@ -963,7 +963,6 @@ fn canonical(a: Address, b: Address) -> (Address, Address) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-/// Some skeleton of `universe` has a pool on every edge of `snapshot`.
 /// The token pairs `snapshot` has a V3, CL or V2 pool on.
 fn edges(snapshot: &Snapshot) -> HashSet<(Address, Address)> {
     snapshot
@@ -980,6 +979,7 @@ fn edges(snapshot: &Snapshot) -> HashSet<(Address, Address)> {
         .collect()
 }
 
+/// Some skeleton of `universe` has a pool on every edge of `snapshot`.
 fn routable(snapshot: &Snapshot, universe: &RouteUniverse) -> bool {
     let present = edges(snapshot);
     universe.token_paths().iter().any(|path| {
