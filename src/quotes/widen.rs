@@ -27,7 +27,9 @@ pub(super) struct WideningReport {
     /// Why it stopped: `settled` (no candidate's probes say it could add
     /// enough), `no_gain` (a wider solve found nothing more), `rounds` (the
     /// round limit came first, so this is not known), `stopped` (a probe or
-    /// graph could not be built) or `none` (no candidates).
+    /// graph could not be built), `thin` (the graph routed nothing until it
+    /// took its thin pools back, with every connector) or `none` (no
+    /// candidates).
     pub(super) end: &'static str,
     /// Connectors beyond the static ones this pair's resident graph may use.
     pub(super) candidates: usize,

@@ -224,8 +224,8 @@ pub struct QuoteMeta {
     pub widened: Vec<Address>,
     /// Probing and re-solving rounds after the first solve.
     pub widening_rounds: usize,
-    /// Why widening stopped: `settled`, `no_gain`, `rounds`, `stopped` or
-    /// `none`; see `WideningReport::end`.
+    /// Why widening stopped: `settled`, `no_gain`, `rounds`, `stopped`,
+    /// `thin` or `none`; see `WideningReport::end`.
     pub widening_end: &'static str,
     /// Wall time of the probes, in microseconds.
     pub widening_probe_us: u64,
